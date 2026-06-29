@@ -23,8 +23,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 
 # ── Config ──────────────────────────────────────────────────────────────────
-MONGO_URL = os.environ['MONGO_URL']
-DB_NAME = os.environ['DB_NAME']
+MONGO_URL = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI')
+if not MONGO_URL:
+    raise RuntimeError("Set MONGO_URL or MONGODB_URI to your MongoDB Atlas connection string.")
+DB_NAME = os.environ.get('DB_NAME', 'krish_computer_db')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'krish-computer-secret-change-me')
 JWT_ALGORITHM = "HS256"
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
