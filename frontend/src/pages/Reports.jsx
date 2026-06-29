@@ -3,6 +3,29 @@ import { api } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
+function localDateBounds(period) {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const localMidnight = (d) => {
+    const y = d.getFullYear(), m = pad(d.getMonth() + 1), day = pad(d.getDate());
+    return new Date(`${y}-${m}-${day}T00:00:00`).toISOString();
+  };
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "daily") {
+    return { start_date: localMidnight(today), end_date: localMidnight(new Date(today.getTime() + 86400000)) };
+  }
+  if (period === "weekly") {
+    return { start_date: localMidnight(new Date(today.getTime() - 6 * 86400000)), end_date: localMidnight(new Date(today.getTime() + 86400000)) };
+  }
+  if (period === "monthly") {
+    return { start_date: localMidnight(new Date(today.getFullYear(), today.getMonth(), 1)), end_date: localMidnight(new Date(today.getTime() + 86400000)) };
+  }
+  if (period === "yearly") {
+    return { start_date: localMidnight(new Date(today.getFullYear(), 0, 1)), end_date: localMidnight(new Date(today.getTime() + 86400000)) };
+  }
+  return {};
+}
+
 export default function Reports() {
   const [period, setPeriod] = useState("monthly");
   const [data, setData] = useState(null);
@@ -10,7 +33,8 @@ export default function Reports() {
 
   useEffect(() => {
     setLoading(true);
-    api.get("/reports/summary", { params: { period } })
+    const bounds = localDateBounds(period);
+    api.get("/reports/summary", { params: { period, ...bounds } })
       .then(r => setData(r.data))
       .finally(() => setLoading(false));
   }, [period]);

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   ArrowLeft, ArrowDownToLine, ArrowUpFromLine, Trash2, User, Phone, Mail,
-  Printer, QrCode, ExternalLink,
+  Printer, QrCode, ExternalLink, CheckCircle2,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -45,6 +45,14 @@ export default function DeviceDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const handleRepairStatus = async (rs) => {
+    try {
+      await api.patch(`/devices/${id}`, { repair_status: rs });
+      setDevice(d => ({ ...d, repair_status: rs }));
+      toast.success("Status updated");
+    } catch { toast.error("Failed to update status"); }
+  };
 
   const handleDelete = async () => {
     try {
@@ -259,6 +267,35 @@ export default function DeviceDetail() {
           )}
         </div>
       </div>
+
+      {/* Repair status */}
+      {device.status !== "issued" && (
+        <div className="border border-zinc-200 mb-6 md:mb-8 bg-white">
+          <div className="px-4 md:px-5 py-3 border-b border-zinc-200 bg-zinc-50 flex items-center gap-2">
+            <CheckCircle2 className="w-3 h-3" />
+            <span className="kpi-label">Repair Status</span>
+          </div>
+          <div className="p-4 md:p-5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                { value: "not_started", label: "Not Started", color: "text-zinc-500 border-zinc-300" },
+                { value: "in_progress", label: "In Progress", color: "text-amber-700 border-amber-300 bg-amber-50" },
+                { value: "completed", label: "Completed", color: "text-green-700 border-green-300 bg-green-50" },
+              ].map(s => (
+                <button key={s.value} type="button"
+                  onClick={() => handleRepairStatus(s.value)}
+                  className={`px-3 py-2.5 text-xs font-semibold rounded-sm border transition-colors ${
+                    (device.repair_status || "not_started") === s.value
+                      ? `ring-2 ring-offset-1 ring-zinc-950 ${s.color}`
+                      : `border-zinc-200 text-zinc-500 hover:border-zinc-400 bg-white`
+                  }`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Movement history */}
       <div className="border border-zinc-200 bg-white">

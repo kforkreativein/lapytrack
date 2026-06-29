@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { toast } from "sonner";
-import { Plus, Trash2, ChevronDown, ChevronRight, Tag, Cpu, Landmark, Users, Upload, Receipt, Check } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, Tag, Cpu, Landmark, Users, Upload, Receipt, Check, ShieldAlert, Loader2 } from "lucide-react";
 
 function XIcon({ className }) {
   return (
@@ -125,6 +127,12 @@ function Section({ icon: Icon, title, children }) {
 
 // ── Main Catalog/Customize page ───────────────────────────────────────────────
 export default function Catalog() {
+  const { unlockWithPin, formatApiErrorDetail } = useAuth();
+  const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [pinValue, setPinValue] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinChecking, setPinChecking] = useState(false);
+
   const [brands, setBrands] = useState([]);
   const [issueCategories, setIssueCategories] = useState([]);
   const [banks, setBanks] = useState([]);
@@ -156,7 +164,44 @@ export default function Catalog() {
     } catch { toast.error("Failed to load"); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { if (pinUnlocked) load(); }, [pinUnlocked]);
+
+  const handlePinChange = async (v) => {
+    setPinValue(v); setPinError("");
+    if (v.length === 4 && !pinChecking) {
+      setPinChecking(true);
+      try {
+        await unlockWithPin(v);
+        setPinUnlocked(true);
+      } catch (err) {
+        const msg = !err.response ? "Cannot reach server" : (formatApiErrorDetail(err.response?.data?.detail) || "Incorrect PIN");
+        setPinError(msg);
+        setPinValue("");
+      } finally { setPinChecking(false); }
+    }
+  };
+
+  if (!pinUnlocked) {
+    return (
+      <div className="mobile-page max-w-sm mx-auto flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldAlert className="w-4 h-4 text-zinc-400" />
+          <span className="kpi-label">Protected</span>
+        </div>
+        <h2 className="font-heading text-2xl font-bold tracking-tight mb-1 text-center">Customize</h2>
+        <p className="text-sm text-zinc-500 mb-8 text-center">Enter your PIN to access settings</p>
+        <InputOTP maxLength={4} value={pinValue} onChange={handlePinChange} disabled={pinChecking} inputMode="numeric" autoFocus>
+          <InputOTPGroup className="gap-3">
+            {[0,1,2,3].map(i => (
+              <InputOTPSlot key={i} index={i} className="w-14 h-14 text-2xl font-bold rounded-sm border-zinc-300 border first:border-l" />
+            ))}
+          </InputOTPGroup>
+        </InputOTP>
+        {pinChecking && <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</div>}
+        {pinError && <div className="mt-4 text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{pinError}</div>}
+      </div>
+    );
+  }
 
   // ── Brand handlers ────────────────────────────────────────────────────────
   const handleAddBrand = async (e) => {

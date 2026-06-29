@@ -14,7 +14,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toast } from "sonner";
-import { ArrowUpFromLine, CalendarIcon, User } from "lucide-react";
+import { ArrowUpFromLine, CalendarIcon, User, IndianRupee } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function OutwardForm() {
@@ -30,13 +30,20 @@ export default function OutwardForm() {
   const [pickerPhone, setPickerPhone] = useState("");
   const [expectedReturn, setExpectedReturn] = useState(null);
   const [remarks, setRemarks] = useState("");
+  const [repairCharge, setRepairCharge] = useState("");
+  const [repairPayment, setRepairPayment] = useState("Cash");
+  const [banks, setBanks] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const { data } = await api.get("/devices");
-      const issuable = data.filter(d => d.status !== "issued");
-      setDevices(issuable);
+      const [{ data: devs }, { data: b }] = await Promise.all([
+        api.get("/devices"),
+        api.get("/catalog/banks"),
+      ]);
+      setDevices(devs.filter(d => d.status !== "issued"));
+      setBanks(b);
+      if (b.length > 0) setRepairPayment(b[0].name);
     })();
   }, []);
 
@@ -59,6 +66,8 @@ export default function OutwardForm() {
         picked_up_by_phone: pickerPhone,
         expected_return_date: expectedReturn ? expectedReturn.toISOString() : null,
         remarks,
+        repair_charge: repairCharge ? parseFloat(repairCharge) : null,
+        repair_payment_method: repairPayment,
       });
       toast.success("Device handed over");
       navigate(`/devices/${deviceId}`);
@@ -222,6 +231,46 @@ export default function OutwardForm() {
                 placeholder="Repair work done, parts replaced, etc."
               />
             </div>
+          </div>
+        </section>
+
+        {/* Repair charge */}
+        <section className="border border-zinc-200 bg-white">
+          <div className="px-4 md:px-5 py-3 border-b border-zinc-200 bg-zinc-50 flex items-center gap-2">
+            <IndianRupee className="w-3.5 h-3.5 text-zinc-500" />
+            <span className="kpi-label">Repair Charge <span className="text-zinc-400 font-normal normal-case">(optional)</span></span>
+          </div>
+          <div className="p-4 md:p-5 space-y-4">
+            <div>
+              <Label className="kpi-label">Amount charged (₹)</Label>
+              <div className="relative mt-1.5">
+                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <Input
+                  value={repairCharge}
+                  onChange={e => setRepairCharge(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0"
+                  className="pl-9 rounded-sm border-zinc-300 h-11 text-xl font-bold tabular-nums"
+                />
+              </div>
+              <p className="text-xs text-zinc-400 mt-1.5">Will auto-create an income entry in the Khata Book for this customer.</p>
+            </div>
+            {repairCharge && parseFloat(repairCharge) > 0 && banks.length > 0 && (
+              <div>
+                <Label className="kpi-label">Payment method</Label>
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {banks.map(b => (
+                    <button key={b.bank_id} type="button"
+                      onClick={() => setRepairPayment(b.name)}
+                      className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${
+                        repairPayment === b.name
+                          ? "bg-zinc-950 text-white border-zinc-950"
+                          : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"
+                      }`}>{b.name}</button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 

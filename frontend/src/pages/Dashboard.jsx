@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { api } from "@/lib/api";
+import { api, downloadCsv } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Boxes, ArrowDownToLine, ArrowUpFromLine, AlertTriangle,
@@ -63,16 +63,8 @@ export default function Dashboard() {
   }, [loading]);
 
   const handleExport = async () => {
-    const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/devices/export/csv`, {
-      credentials: "include",
-    });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "devices.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    try { await downloadCsv("/devices/export/csv", "devices.csv"); }
+    catch (err) { window.alert(err.message || "Export failed"); }
   };
 
   return (
@@ -147,7 +139,7 @@ export default function Dashboard() {
           ) : ledger && (
           <div className="grid grid-cols-1 sm:grid-cols-3 border border-zinc-200 mb-6 md:mb-10 bg-white animate-fade-up">
               <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
-                <div className="kpi-label text-[9px] md:text-[10px]">Net Balance</div>
+                <div className="kpi-label text-[9px] md:text-[10px]">Net (Income − Expense)</div>
                 <div className="flex items-baseline gap-1.5 mt-1.5">
                   <IndianRupee className="w-3 h-3 text-zinc-400 flex-shrink-0 mt-1" />
                   <span className={`font-heading text-2xl md:text-3xl font-bold tabular-nums ${ledger.net_balance >= 0 ? "text-green-700" : "text-red-600"}`}>
@@ -156,7 +148,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
-                <div className="kpi-label text-[9px] md:text-[10px]">You'll Get</div>
+                <div className="kpi-label text-[9px] md:text-[10px]">Total Income Received</div>
                 <div className="flex items-baseline gap-1.5 mt-1.5">
                   <TrendingUp className="w-3 h-3 text-green-600 flex-shrink-0 mt-1" />
                   <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-green-700">
@@ -165,7 +157,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="p-4 md:p-5">
-                <div className="kpi-label text-[9px] md:text-[10px]">You'll Give</div>
+                <div className="kpi-label text-[9px] md:text-[10px]">Total Expenses Paid</div>
                 <div className="flex items-baseline gap-1.5 mt-1.5">
                   <TrendingDown className="w-3 h-3 text-red-600 flex-shrink-0 mt-1" />
                   <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-red-600">

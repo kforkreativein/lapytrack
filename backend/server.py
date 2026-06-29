@@ -289,7 +289,7 @@ def public_device_view(doc: dict) -> dict:
     allowed = {
         "device_id", "job_number", "device_type", "brand", "model", "serial_number",
         "condition", "category", "customer_name", "customer_phone", "issue_categories",
-        "issue_description", "status", "inward_date", "outward_date", "expected_return_date",
+        "issue_description", "status", "repair_status", "inward_date", "outward_date", "expected_return_date",
         "qr_code",
     }
     return {k: v for k, v in enriched.items() if k in allowed}
@@ -514,6 +514,7 @@ class DeviceIn(BaseModel):
     customer_email: Optional[str] = ""
     issue_categories: List[str] = []
     issue_description: Optional[str] = ""
+    repair_status: Optional[str] = "not_started"
 
 class DeviceUpdate(BaseModel):
     device_type: Optional[str] = None
@@ -527,6 +528,7 @@ class DeviceUpdate(BaseModel):
     customer_email: Optional[str] = None
     issue_description: Optional[str] = None
     status: Optional[str] = None
+    repair_status: Optional[str] = None
 
 class MovementIn(BaseModel):
     device_id: str
@@ -536,6 +538,8 @@ class MovementIn(BaseModel):
     picked_up_by_phone: Optional[str] = ""
     expected_return_date: Optional[str] = None
     remarks: Optional[str] = ""
+    repair_charge: Optional[float] = None
+    repair_payment_method: Optional[str] = "Cash"
 
 # ── Device Routes ─────────────────────────────────────────────────────────────
 async def generate_job_number() -> str:
@@ -564,6 +568,7 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "issue_description": payload.issue_description or "",
         # ponytail: QR not stored — enrich_device regenerates it on every read, saving ~6KB/device
         "status": "in_stock" if payload.category == "stock" else "in_repair",
+        "repair_status": payload.repair_status or "not_started",
         "inward_date": t, "outward_date": None, "created_by": user["user_id"],
         "created_at": t, "updated_at": t,
     }
@@ -608,7 +613,6 @@ async def export_csv(
     end_date: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    await require_step_up(request, user, "export.devices_csv")
     filt: dict = {}
     date_rng = _build_date_range(period, start_date, end_date)
     if date_rng:
@@ -696,6 +700,26 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
         update.update({"inward_date": t, "picked_up_by_name": "", "picked_up_by_phone": "",
                        "pickup_relationship": "", "expected_return_date": None})
     await db.devices.update_one(scoped_filter(user, {"device_id": payload.device_id}), {"$set": update})
+
+    # Auto-create ledger income entry for repair charge on outward
+    if mt == "outward" and payload.repair_charge and payload.repair_charge > 0:
+        cust_name = device.get("customer_name", "").strip()
+        cust_phone = device.get("customer_phone", "").strip() or None
+        customer_id = None
+        if cust_name:
+            existing = await db.customers.find_one(scoped_filter(user, {"name": {"$regex": f"^{re.escape(cust_name)}$", "$options": "i"}}), {"_id": 0})
+            if not existing:
+                existing = {"id": str(uuid.uuid4()), "name": cust_name, "phone": cust_phone,
+                            "note": None, "created_at": t}
+                await db.customers.insert_one(with_shop(user, existing))
+            customer_id = existing["id"]
+        txn = {"id": str(uuid.uuid4()), "amount": round(payload.repair_charge, 2),
+               "type": "credit", "category": "Repair Income",
+               "note": f"Repair charge – {device.get('brand','')} {device.get('model','')} ({device.get('job_number','')})".strip(" –()"),
+               "payment_method": payload.repair_payment_method or "Cash",
+               "customer_id": customer_id, "date": t, "created_at": t}
+        await db.transactions.insert_one(with_shop(user, txn))
+
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
     return enrich_device(doc)
 
@@ -740,6 +764,7 @@ DEFAULT_CATEGORIES = [
     {"name": "Office Expense", "icon": "Briefcase", "color": "#DC2626", "type": "debit"},
     {"name": "Salary", "icon": "Users", "color": "#DC2626", "type": "debit"},
     {"name": "Utilities", "icon": "Zap", "color": "#DC2626", "type": "debit"},
+    {"name": "Personal Expense", "icon": "User", "color": "#DC2626", "type": "debit"},
     {"name": "Other", "icon": "MoreHorizontal", "color": "#6B7280", "type": "both"},
 ]
 
@@ -845,8 +870,7 @@ async def update_customer(customer_id: str, body: CustomerUpdate, user: dict = D
     return await db.customers.find_one(scoped_filter(user, {"id": customer_id}), {"_id": 0})
 
 @api_router.delete("/customers/{customer_id}")
-async def delete_customer(customer_id: str, request: Request, user: dict = Depends(get_current_user)):
-    await require_step_up(request, user, "delete.customer")
+async def delete_customer(customer_id: str, user: dict = Depends(get_current_user)):
     res = await db.customers.delete_one(scoped_filter(user, {"id": customer_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Customer not found")
     await db.transactions.delete_many(scoped_filter(user, {"customer_id": customer_id}))
@@ -855,7 +879,6 @@ async def delete_customer(customer_id: str, request: Request, user: dict = Depen
 
 @api_router.get("/customers/export/csv")
 async def export_customers_csv(request: Request, user: dict = Depends(get_current_user)):
-    await require_step_up(request, user, "export.customers_csv")
     customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(10000)
     await audit_log("export.customers_csv", user, meta={"count": len(customers)})
     out = io.StringIO()
@@ -963,8 +986,7 @@ async def update_transaction(txn_id: str, body: TransactionUpdate, user: dict = 
     return await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
 
 @api_router.delete("/transactions/{txn_id}")
-async def delete_transaction(txn_id: str, request: Request, user: dict = Depends(get_current_user)):
-    await require_step_up(request, user, "delete.transaction")
+async def delete_transaction(txn_id: str, user: dict = Depends(get_current_user)):
     res = await db.transactions.delete_one(scoped_filter(user, {"id": txn_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Transaction not found")
     await audit_log("delete.transaction", user, {"txn_id": txn_id})
@@ -978,7 +1000,6 @@ async def export_transactions_csv(
     end_date: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    await require_step_up(request, user, "export.transactions_csv")
     q: dict = {}
     date_rng = _build_date_range(period, start_date, end_date)
     if date_rng:
@@ -1059,20 +1080,33 @@ async def delete_reminder(reminder_id: str, user: dict = Depends(get_current_use
 
 # ── Ledger: Reports ───────────────────────────────────────────────────────────
 @api_router.get("/reports/summary")
-async def reports_summary(period: str = "monthly", user: dict = Depends(get_current_user)):
+async def reports_summary(period: str = "monthly",
+                          start_date: Optional[str] = None,
+                          end_date: Optional[str] = None,
+                          user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
-    if period == "daily":
-        days = 1
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif period == "weekly":
-        days = 7
-        start = now - timedelta(days=7)
-    elif period == "yearly":
-        days = 365
-        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    # If frontend passes explicit bounds (local-time-aware), use them
+    if start_date:
+        start = datetime.fromisoformat(start_date.replace("Z", "+00:00")) if start_date.endswith("Z") else datetime.fromisoformat(start_date)
+        if start.tzinfo is None: start = start.replace(tzinfo=timezone.utc)
+        end_dt = None
+        if end_date:
+            end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00")) if end_date.endswith("Z") else datetime.fromisoformat(end_date)
+            if end_dt.tzinfo is None: end_dt = end_dt.replace(tzinfo=timezone.utc)
+        days = max(1, (end_dt - start).days) if end_dt else 1
     else:
-        days = 30
-        start = now - timedelta(days=30)
+        if period == "daily":
+            days = 1
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == "weekly":
+            days = 7
+            start = now - timedelta(days=7)
+        elif period == "yearly":
+            days = 365
+            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            days = 30
+            start = now - timedelta(days=30)
     txns = await db.transactions.find(scoped_filter(user, {"date": {"$gte": start.isoformat()}}), {"_id": 0}).to_list(5000)
     series = []
     for i in range(days):
@@ -1109,8 +1143,17 @@ async def ledger_dashboard(user: dict = Depends(get_current_user)):
 # ── Catalog: Default Data ─────────────────────────────────────────────────────
 DEFAULT_BRANDS = [
     {"name": "Apple", "models": [
-        "MacBook Air M1 (2020)", "MacBook Air M2 (2022)", "MacBook Air 13\" M3 (2024)",
-        "MacBook Air 15\" M3 (2024)", "MacBook Air 13\" M4 (2025)", "MacBook Air 15\" M4 (2025)",
+        "MacBook Air (2015) Intel", "MacBook Air (2017) Intel",
+        "MacBook Air (2018) Intel", "MacBook Air (2019) Intel", "MacBook Air (2020) Intel",
+        "MacBook Air M1 (2020)", "MacBook Air M2 (2022)",
+        "MacBook Air 13\" M3 (2024)", "MacBook Air 15\" M3 (2024)",
+        "MacBook Air 13\" M4 (2025)", "MacBook Air 15\" M4 (2025)",
+        "MacBook Pro 13\" (2015) Intel", "MacBook Pro 15\" (2015) Intel",
+        "MacBook Pro 13\" (2016) Intel", "MacBook Pro 15\" (2016) Intel",
+        "MacBook Pro 13\" (2017) Intel", "MacBook Pro 15\" (2017) Intel",
+        "MacBook Pro 13\" (2018) Intel", "MacBook Pro 15\" (2018) Intel",
+        "MacBook Pro 13\" (2019) Intel", "MacBook Pro 15\" (2019) Intel",
+        "MacBook Pro 13\" (2020) Intel", "MacBook Pro 16\" (2019) Intel", "MacBook Pro 16\" (2020) Intel",
         "MacBook Pro 13\" M1 (2020)", "MacBook Pro 14\" M1 Pro (2021)", "MacBook Pro 16\" M1 Pro (2021)",
         "MacBook Pro 14\" M1 Max (2021)", "MacBook Pro 16\" M1 Max (2021)",
         "MacBook Pro 13\" M2 (2022)", "MacBook Pro 14\" M2 Pro (2023)", "MacBook Pro 16\" M2 Pro (2023)",
@@ -1119,92 +1162,174 @@ DEFAULT_BRANDS = [
         "MacBook Pro 14\" M3 Max (2024)", "MacBook Pro 16\" M3 Max (2024)",
         "MacBook Pro 14\" M4 (2024)", "MacBook Pro 16\" M4 (2024)",
         "MacBook Pro 14\" M4 Pro (2025)", "MacBook Pro 16\" M4 Pro (2025)",
-        "MacBook Air (2018) Intel", "MacBook Air (2019) Intel", "MacBook Air (2020) Intel",
-        "MacBook Pro 13\" (2017) Intel", "MacBook Pro 13\" (2018) Intel",
-        "MacBook Pro 13\" (2019) Intel", "MacBook Pro 13\" (2020) Intel",
-        "MacBook Pro 15\" (2017) Intel", "MacBook Pro 15\" (2018) Intel",
-        "MacBook Pro 15\" (2019) Intel", "MacBook Pro 16\" (2019) Intel", "MacBook Pro 16\" (2020) Intel",
         "iMac 21.5\" (2019) Intel", "iMac 24\" M1 (2021)", "iMac 24\" M3 (2023)", "iMac 24\" M4 (2024)",
         "Mac mini M1 (2020)", "Mac mini M2 (2023)", "Mac mini M4 (2024)",
         "Other",
     ]},
     {"name": "Dell", "models": [
-        "Inspiron 14", "Inspiron 15", "Inspiron 16", "Inspiron 15 3000", "Inspiron 15 5000", "Inspiron 15 7000",
-        "Latitude 5410", "Latitude 5420", "Latitude 5430", "Latitude 5440",
-        "Latitude 7420", "Latitude 7430", "Latitude 7440",
-        "XPS 13", "XPS 15", "XPS 17",
-        "Vostro 3000", "Vostro 5000",
-        "G15 Gaming", "G16 Gaming",
-        "Precision 3560", "Precision 5560",
+        "XPS 13 9350 (2016)", "XPS 13 9360 (2017)", "XPS 13 9370 (2018)", "XPS 13 9380 (2019)",
+        "XPS 13 9300 (2020)", "XPS 13 9310 (2021)", "XPS 13 Plus 9320 (2022)",
+        "XPS 13 9340 (2024)", "XPS 14 9440 (2024)",
+        "XPS 15 9550 (2016)", "XPS 15 9560 (2017)", "XPS 15 9570 (2018)", "XPS 15 9500 (2020)",
+        "XPS 15 9510 (2021)", "XPS 15 9520 (2022)", "XPS 15 9530 (2023)", "XPS 15 9540 (2024)",
+        "XPS 17 9700 (2020)", "XPS 17 9710 (2021)", "XPS 17 9720 (2022)", "XPS 17 9730 (2023)",
+        "Inspiron 14 3000", "Inspiron 14 5000", "Inspiron 14 7000",
+        "Inspiron 15 3000", "Inspiron 15 5000", "Inspiron 15 7000", "Inspiron 16 Plus",
+        "Latitude 5400", "Latitude 5410", "Latitude 5420", "Latitude 5430", "Latitude 5440",
+        "Latitude 7400", "Latitude 7420", "Latitude 7430", "Latitude 7440",
+        "Latitude 9510", "Latitude 9520",
+        "G15 Gaming", "G16 Gaming", "G3 15", "G5 15",
+        "Precision 3560", "Precision 5560", "Precision 5570",
+        "Vostro 14 3000", "Vostro 15 3000", "Vostro 15 5000",
         "Other",
     ]},
     {"name": "HP", "models": [
-        "Pavilion 14", "Pavilion 15", "Pavilion 16",
-        "Envy 13", "Envy 15", "Envy 17", "Envy x360 13", "Envy x360 15",
-        "Spectre x360 13", "Spectre x360 14", "Spectre x360 16",
-        "EliteBook 840 G8", "EliteBook 840 G9", "EliteBook 850 G8", "EliteBook 1040",
-        "ProBook 440", "ProBook 450", "ProBook 455",
-        "Omen 15", "Omen 16", "Omen 17",
-        "HP Laptop 14", "HP Laptop 15",
+        "Spectre x360 13 (2016)", "Spectre x360 13 (2018)", "Spectre x360 13 (2020)",
+        "Spectre x360 14 (2021)", "Spectre x360 14 (2023)", "Spectre x360 16 (2022)",
+        "Spectre x360 16 (2024)",
+        "Envy 13 (2017)", "Envy 13 (2019)", "Envy 13 (2021)",
+        "Envy 15 (2020)", "Envy 15 (2022)", "Envy 17 (2021)", "Envy 17 (2023)",
+        "Envy x360 13 (2020)", "Envy x360 15 (2020)", "Envy x360 15 (2022)",
+        "Pavilion 14 (2021)", "Pavilion 15 (2021)", "Pavilion 15 (2023)", "Pavilion 16 (2024)",
+        "Pavilion x360 14", "Pavilion x360 15",
+        "EliteBook 840 G5", "EliteBook 840 G7", "EliteBook 840 G8", "EliteBook 840 G9", "EliteBook 840 G10",
+        "EliteBook 850 G8", "EliteBook 1040 G9", "EliteBook 1040 G10",
+        "ProBook 440 G7", "ProBook 440 G8", "ProBook 450 G8", "ProBook 450 G9", "ProBook 455 G9",
+        "Omen 15 (2020)", "Omen 16 (2021)", "Omen 16 (2023)", "Omen 17 (2022)",
+        "HP Laptop 14s", "HP Laptop 15s", "HP 250 G8", "HP 250 G9",
         "Other",
     ]},
     {"name": "Lenovo", "models": [
-        "ThinkPad X1 Carbon Gen 9", "ThinkPad X1 Carbon Gen 10", "ThinkPad X1 Carbon Gen 11",
-        "ThinkPad E14", "ThinkPad E15", "ThinkPad E16",
-        "ThinkPad T14", "ThinkPad T15", "ThinkPad L14", "ThinkPad L15",
+        "ThinkPad X1 Carbon Gen 3 (2015)", "ThinkPad X1 Carbon Gen 4 (2016)",
+        "ThinkPad X1 Carbon Gen 5 (2017)", "ThinkPad X1 Carbon Gen 6 (2018)",
+        "ThinkPad X1 Carbon Gen 7 (2019)", "ThinkPad X1 Carbon Gen 8 (2020)",
+        "ThinkPad X1 Carbon Gen 9 (2021)", "ThinkPad X1 Carbon Gen 10 (2022)",
+        "ThinkPad X1 Carbon Gen 11 (2023)", "ThinkPad X1 Carbon Gen 12 (2024)",
+        "ThinkPad T470", "ThinkPad T480", "ThinkPad T490",
+        "ThinkPad T14 Gen 1", "ThinkPad T14 Gen 2", "ThinkPad T14 Gen 3", "ThinkPad T14 Gen 4",
+        "ThinkPad E14 Gen 2", "ThinkPad E14 Gen 3", "ThinkPad E14 Gen 4", "ThinkPad E14 Gen 5",
+        "ThinkPad E15 Gen 2", "ThinkPad E15 Gen 3", "ThinkPad E16 Gen 1",
+        "ThinkPad L14 Gen 3", "ThinkPad L15 Gen 3",
+        "IdeaPad 3 14", "IdeaPad 3 15", "IdeaPad 5 14", "IdeaPad 5 15",
         "IdeaPad Slim 3", "IdeaPad Slim 5", "IdeaPad Slim 7",
-        "IdeaPad 3", "IdeaPad 5", "IdeaPad Gaming 3",
-        "Legion 5", "Legion 5 Pro", "Legion 7", "Legion Slim 5",
-        "Yoga 7", "Yoga 9", "Yoga Slim 7",
-        "V14", "V15",
+        "IdeaPad Gaming 3", "IdeaPad Gaming 3i",
+        "Legion 5 Gen 6", "Legion 5 Gen 7", "Legion 5 Gen 8", "Legion 5 Gen 9",
+        "Legion 5 Pro Gen 6", "Legion 5 Pro Gen 7", "Legion 7 Gen 7", "Legion Slim 5 Gen 8",
+        "Yoga 7 14", "Yoga 7 16", "Yoga 9 14", "Yoga 9 15",
+        "Yoga Slim 7 14", "Yoga Slim 7 Pro 14",
+        "V14 Gen 2", "V15 Gen 2", "V14 Gen 3", "V15 Gen 3",
         "Other",
     ]},
     {"name": "Asus", "models": [
-        "VivoBook 14", "VivoBook 15", "VivoBook 15X", "VivoBook 16",
-        "VivoBook S14", "VivoBook S15",
-        "ZenBook 13", "ZenBook 14", "ZenBook 14 OLED", "ZenBook 15",
-        "ROG Strix G15", "ROG Strix G17", "ROG Zephyrus G14", "ROG Zephyrus G15",
-        "TUF Gaming A15", "TUF Gaming F15", "TUF Gaming F17",
-        "ExpertBook B1", "ExpertBook B9",
+        "VivoBook 14 (2019)", "VivoBook 14 (2021)", "VivoBook 15 (2020)", "VivoBook 15 (2022)",
+        "VivoBook 15X", "VivoBook 16", "VivoBook S14 OLED", "VivoBook S15 OLED", "VivoBook S 15 (2024)",
+        "VivoBook Pro 14 OLED", "VivoBook Pro 15 OLED",
+        "ZenBook 13 UX333 (2019)", "ZenBook 13 UX325 (2021)",
+        "ZenBook 14 UX433 (2019)", "ZenBook 14 UX425 (2021)",
+        "ZenBook 14 OLED (2022)", "ZenBook 14X OLED (2022)", "ZenBook 15 UX534 (2019)",
+        "ROG Strix G15 (2021)", "ROG Strix G15 (2023)", "ROG Strix G17 (2021)",
+        "ROG Strix SCAR 15", "ROG Strix SCAR 17",
+        "ROG Zephyrus G14 (2020)", "ROG Zephyrus G14 (2022)", "ROG Zephyrus G14 (2024)",
+        "ROG Zephyrus G15 (2021)", "ROG Zephyrus M16",
+        "TUF Gaming A15 (2020)", "TUF Gaming A15 (2022)", "TUF Gaming A15 (2024)",
+        "TUF Gaming F15 (2021)", "TUF Gaming F15 (2023)",
+        "TUF Gaming F17 (2021)", "TUF Gaming F17 (2023)",
+        "ExpertBook B1 B1500", "ExpertBook B9 B9450",
         "Other",
     ]},
     {"name": "Acer", "models": [
-        "Aspire 3", "Aspire 5", "Aspire 7",
-        "Aspire Lite 14", "Aspire Lite 15",
-        "Swift 3", "Swift 5", "Swift X 14", "Swift X 16",
-        "Nitro 5", "Nitro V 15", "Predator Helios 300", "Predator Helios Neo 16",
-        "Extensa 15", "TravelMate P2", "TravelMate P4",
+        "Aspire 3 A315 (2018)", "Aspire 3 A315 (2021)", "Aspire 3 A315 (2023)",
+        "Aspire 5 A515 (2018)", "Aspire 5 A515 (2020)", "Aspire 5 A515 (2022)", "Aspire 5 A515 (2024)",
+        "Aspire 7 A715 (2021)", "Aspire 7 A715 (2023)", "Aspire Lite 14", "Aspire Lite 15",
+        "Swift 3 SF314 (2017)", "Swift 3 SF314 (2019)", "Swift 3 SF314 (2021)",
+        "Swift 5 SF514 (2018)", "Swift 5 SF514 (2020)",
+        "Swift X 14 SFX14 (2021)", "Swift X 14 SFX14 (2023)", "Swift X 16 (2022)",
+        "Swift Go 14 (2023)", "Swift Go 16 (2023)",
+        "Nitro 5 AN515 (2019)", "Nitro 5 AN515 (2021)", "Nitro 5 AN515 (2023)",
+        "Nitro V 15 (2024)", "Nitro V 16 (2024)",
+        "Predator Helios 300 PH315 (2018)", "Predator Helios 300 PH315 (2020)",
+        "Predator Helios 300 PH315 (2022)", "Predator Helios Neo 16 (2023)",
+        "Predator Triton 500 (2019)", "Predator Triton 500 SE (2021)",
+        "Extensa 15 EX215", "TravelMate P2 TMP215", "TravelMate P4 TMP414",
         "Other",
     ]},
     {"name": "MSI", "models": [
-        "Modern 14", "Modern 15",
-        "Prestige 14", "Prestige 15",
-        "GF63 Thin", "GL65 Leopard", "GS65 Stealth",
-        "Raider GE67 HX", "Creator M16", "Summit E16",
-        "Sword 15", "Pulse GL66",
+        "GS63 Stealth (2016)", "GS65 Stealth (2018)", "GS66 Stealth (2020)", "GS76 Stealth (2021)",
+        "GT76 Titan (2019)", "GT76 Titan (2020)",
+        "GP65 Leopard (2019)", "GP66 Leopard (2021)", "GP76 Leopard (2021)",
+        "GF63 Thin (2019)", "GF63 Thin (2021)", "GF63 Thin (2023)",
+        "Raider GE66 (2021)", "Raider GE76 (2021)", "Raider GE67 HX (2023)",
+        "Vector GP66 (2022)", "Vector GP76 (2022)",
+        "Katana GF66 (2021)", "Katana 15 B12 (2022)",
+        "Sword 15 (2022)", "Pulse GL66 (2021)", "Pulse 15 B13 (2023)",
+        "Stealth 15M (2021)", "Stealth 14 Studio (2023)",
+        "Modern 14 (2020)", "Modern 14 (2022)", "Modern 15 (2021)", "Modern 15 (2023)",
+        "Prestige 14 (2020)", "Prestige 14 (2022)", "Prestige 15 (2021)",
+        "Creator M16 (2022)", "Summit E16 Flip (2021)",
+        "Other",
+    ]},
+    {"name": "Microsoft Surface", "models": [
+        "Surface Pro 4 (2015)", "Surface Pro (2017)", "Surface Pro 6 (2018)",
+        "Surface Pro 7 (2019)", "Surface Pro 7+ (2021)", "Surface Pro 8 (2021)",
+        "Surface Pro 9 (2022)", "Surface Pro 10 (2024)", "Surface Pro 11 (2024)",
+        "Surface Laptop 1 (2017)", "Surface Laptop 2 (2018)", "Surface Laptop 3 (2019)",
+        "Surface Laptop 4 (2021)", "Surface Laptop 5 (2022)", "Surface Laptop 6 (2024)",
+        "Surface Laptop 7 (2024)",
+        "Surface Laptop Go (2020)", "Surface Laptop Go 2 (2022)", "Surface Laptop Go 3 (2023)",
+        "Surface Laptop Studio (2021)", "Surface Laptop Studio 2 (2023)",
+        "Surface Book (2015)", "Surface Book 2 (2017)", "Surface Book 3 (2020)",
         "Other",
     ]},
     {"name": "Samsung", "models": [
-        "Galaxy Book 2", "Galaxy Book 2 Pro", "Galaxy Book 2 Pro 360",
-        "Galaxy Book 3", "Galaxy Book 3 Pro", "Galaxy Book 3 Ultra",
-        "Galaxy Book 4", "Galaxy Book 4 Pro", "Galaxy Book 4 Ultra",
+        "Galaxy Book Pro 13 (2021)", "Galaxy Book Pro 15 (2021)", "Galaxy Book Pro 360 15 (2021)",
+        "Galaxy Book 2 (2022)", "Galaxy Book 2 Pro 13 (2022)", "Galaxy Book 2 Pro 15 (2022)",
+        "Galaxy Book 2 Pro 360 13 (2022)", "Galaxy Book 2 Business (2022)",
+        "Galaxy Book 3 (2023)", "Galaxy Book 3 Pro 14 (2023)", "Galaxy Book 3 Pro 16 (2023)",
+        "Galaxy Book 3 Ultra (2023)", "Galaxy Book 3 360 (2023)",
+        "Galaxy Book 4 (2024)", "Galaxy Book 4 Pro 14 (2024)", "Galaxy Book 4 Pro 16 (2024)",
+        "Galaxy Book 4 Ultra (2024)", "Galaxy Book 4 360 (2024)",
+        "Galaxy Book 5 Pro 14 (2025)", "Galaxy Book 5 Pro 16 (2025)",
+        "Notebook 9 Pro (2018)", "Notebook 9 (2019)",
         "Other",
     ]},
-    {"name": "Microsoft", "models": [
-        "Surface Pro 7", "Surface Pro 8", "Surface Pro 9", "Surface Pro 10",
-        "Surface Laptop 4", "Surface Laptop 5", "Surface Laptop 6",
-        "Surface Laptop Go 2", "Surface Laptop Go 3",
-        "Surface Go 3",
+    {"name": "Razer", "models": [
+        "Razer Blade Stealth 13 (2017)", "Razer Blade Stealth 13 (2019)", "Razer Blade Stealth 13 (2021)",
+        "Razer Blade 15 Base (2018)", "Razer Blade 15 Base (2019)", "Razer Blade 15 Base (2020)",
+        "Razer Blade 15 Base (2021)", "Razer Blade 15 (2022)", "Razer Blade 15 (2023)", "Razer Blade 15 (2024)",
+        "Razer Blade 15 Advanced (2018)", "Razer Blade 15 Advanced (2019)",
+        "Razer Blade 15 Advanced (2020)", "Razer Blade 15 Advanced (2021)",
+        "Razer Blade 17 Pro (2018)", "Razer Blade 17 Pro (2019)", "Razer Blade 17 (2021)",
+        "Razer Blade 17 (2022)", "Razer Blade 17 (2023)",
+        "Razer Blade 14 (2021)", "Razer Blade 14 (2022)", "Razer Blade 14 (2023)", "Razer Blade 14 (2024)",
+        "Razer Blade 16 (2023)", "Razer Blade 16 (2024)",
+        "Other",
+    ]},
+    {"name": "LG", "models": [
+        "LG Gram 13 (2016)", "LG Gram 14 (2017)", "LG Gram 15 (2017)",
+        "LG Gram 14 (2018)", "LG Gram 15 (2018)",
+        "LG Gram 14 (2019)", "LG Gram 15 (2019)", "LG Gram 17 (2019)",
+        "LG Gram 14 (2020)", "LG Gram 15 (2020)", "LG Gram 17 (2020)",
+        "LG Gram 14 (2021)", "LG Gram 16 (2021)", "LG Gram 17 (2021)", "LG Gram 360 14 (2021)",
+        "LG Gram 14 (2022)", "LG Gram 16 (2022)", "LG Gram 17 (2022)", "LG Gram 360 16 (2022)",
+        "LG Gram 14 (2023)", "LG Gram 16 (2023)", "LG Gram 17 (2023)",
+        "LG Gram Style 14 (2023)", "LG Gram Style 16 (2023)",
+        "LG Gram 14 (2024)", "LG Gram 16 (2024)", "LG Gram Pro 16 (2024)", "LG Gram Pro 17 (2024)",
         "Other",
     ]},
     {"name": "Toshiba / Dynabook", "models": [
-        "Satellite Pro L50", "Satellite Pro C50",
-        "Tecra A50", "Tecra X40",
-        "Portege Z30", "Portege X30L",
+        "Satellite C55 (2015)", "Satellite C75 (2015)", "Satellite Pro L50 (2016)",
+        "Satellite Pro C50 (2017)", "Satellite Pro R50 (2018)",
+        "Tecra A50 (2016)", "Tecra A50 (2018)", "Tecra A50 (2020)",
+        "Tecra X40 (2017)", "Tecra X40 (2019)",
+        "Portege Z30 (2016)", "Portege Z30 (2018)", "Portege X30L (2019)",
+        "Portege X30L (2021)", "Portege X40 (2022)",
+        "Dynabook Satellite Pro L50 (2020)", "Dynabook Tecra A50 (2021)",
+        "Dynabook Portege X30L (2021)", "Dynabook Portege X40 (2022)",
         "Other",
     ]},
-    {"name": "Sony", "models": [
-        "VAIO E Series", "VAIO S Series", "VAIO SX14", "VAIO FE Series",
+    {"name": "Sony VAIO", "models": [
+        "VAIO S Series", "VAIO SX12", "VAIO SX14", "VAIO FE14", "VAIO FE15",
+        "VAIO Z (2021)", "VAIO F16 (2023)", "VAIO F14 (2023)",
         "Other",
     ]},
     {"name": "Other", "models": ["Other"]},

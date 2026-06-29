@@ -240,63 +240,46 @@ export default function Settings() {
               </div>
               <ChevronRight className="w-4 h-4 text-zinc-400 group-hover:text-zinc-950 transition-colors" />
             </button>
+          ) : user?.has_email ? (
+            // Already configured — just show email, direct to Change Password above
+            <div className="mb-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">Email & Password</div>
+                  <div className="text-xs text-zinc-400 mt-0.5">Your sign-in email</div>
+                </div>
+                <button type="button" onClick={() => setEmailOpen(false)} className="text-xs text-zinc-500 hover:text-zinc-950">Close</button>
+              </div>
+              <div className="px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-sm text-sm text-zinc-700">{user.email}</div>
+              <p className="text-xs text-zinc-400">To change your password, use <strong>Change Password</strong> above.</p>
+            </div>
           ) : (
             <form onSubmit={handleEmailPassword} className="mb-5 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm font-medium">Email & Password</div>
-                  <div className="text-xs text-zinc-400 mt-0.5">Used only if PIN access is unavailable.</div>
+                  <div className="text-sm font-medium">Add Email Login</div>
+                  <div className="text-xs text-zinc-400 mt-0.5">Backup access if PIN is unavailable</div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setEmailOpen(false); setEmailError(""); setPassword(""); setConfirmPassword(""); }}
-                  className="text-xs text-zinc-500 hover:text-zinc-950"
-                >
-                  Cancel
-                </button>
+                <button type="button" onClick={() => { setEmailOpen(false); setEmailError(""); setPassword(""); setConfirmPassword(""); }} className="text-xs text-zinc-500 hover:text-zinc-950">Cancel</button>
               </div>
               <div>
                 <Label className="kpi-label">Email</Label>
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="mt-1.5 rounded-sm border-zinc-300 h-10"
-                  placeholder="you@example.com"
-                />
+                <Input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  className="mt-1.5 rounded-sm border-zinc-300 h-10" placeholder="you@example.com" />
               </div>
               <div>
-                <Label className="kpi-label">Password</Label>
+                <Label className="kpi-label">Password <span className="text-zinc-400 font-normal">(min 10 chars)</span></Label>
                 <div className="relative mt-1.5">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    className="rounded-sm border-zinc-300 h-10 pr-10"
-                    placeholder="Minimum 6 characters"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
-                  >
+                  <Input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                    className="rounded-sm border-zinc-300 h-10 pr-10" placeholder="••••••••" />
+                  <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700">
                     {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </div>
-              <div>
-                <Label className="kpi-label">Confirm password</Label>
-                <Input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={e => setConfirmPassword(e.target.value)}
-                  className="mt-1.5 rounded-sm border-zinc-300 h-10"
-                  placeholder="Repeat password"
-                />
-              </div>
               {emailError && <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{emailError}</div>}
               <Button type="submit" disabled={saving} className="w-full rounded-sm bg-zinc-950 hover:bg-zinc-800 h-10">
-                {saving ? "Saving..." : user?.has_email ? "Update Email Login" : "Add Email Login"}
+                {saving ? "Saving..." : "Add Email Login"}
               </Button>
             </form>
           )}

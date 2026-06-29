@@ -257,7 +257,7 @@ function AddEntryDialog({ open, onClose, customers, categories, banks, onSaved, 
           <div>
             <Label className="kpi-label mb-1.5 block">Customer *</Label>
             <CustomerPicker customers={customers} value={customer} onChange={setCustomer}
-              onCreateNew={name => { handleClose(); onCreateNew(name); }} />
+              onCreateNew={name => { onCreateNew(name); }} />
           </div>
 
           <div>
@@ -378,7 +378,7 @@ export default function Ledger() {
     await load();
     if (newCustomer) {
       setPreSelectedCustomer(newCustomer);
-      setShowEntry(true);
+      setShowEntry(true); // re-open if it was closed; no-op if still open
     }
   };
 
@@ -449,7 +449,7 @@ export default function Ledger() {
       {/* Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 border border-zinc-200 mb-6 animate-fade-up">
         <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
-          <div className="kpi-label text-[9px] md:text-[10px]">Total You'll Get</div>
+          <div className="kpi-label text-[9px] md:text-[10px]">Customers Owe You</div>
           <div className="flex items-center gap-1.5 mt-1.5">
             <TrendingUp className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
             <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-green-700">
@@ -458,7 +458,7 @@ export default function Ledger() {
           </div>
         </div>
         <div className="p-4 md:p-5">
-          <div className="kpi-label text-[9px] md:text-[10px]">Total You'll Give</div>
+          <div className="kpi-label text-[9px] md:text-[10px]">You Owe Customers</div>
           <div className="flex items-center gap-1.5 mt-1.5">
             <TrendingDown className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
             <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-red-600">
@@ -491,36 +491,38 @@ export default function Ledger() {
               {displayDate(selectedDate)} · Credit ₹{fmtAmount(dayCredit)} · Debit ₹{fmtAmount(dayDebit)}
             </div>
           </div>
-          <div className="grid grid-cols-[44px_1fr_44px] sm:flex sm:items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedDate(value => shiftDate(value, -1))}
-              className="w-11 h-10 sm:w-9 sm:h-9 border border-zinc-300 bg-white flex items-center justify-center hover:border-zinc-950 transition-colors touch-target"
-              aria-label="Previous day"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-            </button>
-            <Input
-              type="date"
-              value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value || todayValue)}
-              className="h-10 sm:h-9 w-full sm:w-[150px] rounded-sm border-zinc-300 bg-white text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => setSelectedDate(value => shiftDate(value, 1))}
-              className="w-11 h-10 sm:w-9 sm:h-9 border border-zinc-300 bg-white flex items-center justify-center hover:border-zinc-950 transition-colors disabled:opacity-40 disabled:hover:border-zinc-300 touch-target"
-              aria-label="Next day"
-              disabled={selectedDate >= todayValue}
-            >
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedDate(value => shiftDate(value, -1))}
+                className="w-9 h-9 border border-zinc-300 bg-white flex items-center justify-center hover:border-zinc-950 transition-colors rounded-sm"
+                aria-label="Previous day"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+              </button>
+              <Input
+                type="date"
+                value={selectedDate}
+                onChange={e => setSelectedDate(e.target.value || todayValue)}
+                className="h-9 w-[140px] rounded-sm border-zinc-300 bg-white text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedDate(value => shiftDate(value, 1))}
+                className="w-9 h-9 border border-zinc-300 bg-white flex items-center justify-center hover:border-zinc-950 transition-colors disabled:opacity-40 disabled:hover:border-zinc-300 rounded-sm"
+                aria-label="Next day"
+                disabled={selectedDate >= todayValue}
+              >
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
             {selectedDate !== todayValue && (
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => setSelectedDate(todayValue)}
-                className="h-10 sm:h-9 rounded-sm border-zinc-300 text-xs col-span-3 sm:col-span-1"
+                className="h-9 rounded-sm border-zinc-300 text-xs"
               >
                 Today
               </Button>
