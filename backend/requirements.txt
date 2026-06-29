@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+motor==3.5.3
+pymongo>=4.5,<4.9
+pydantic[email]==2.8.2
+python-dotenv==1.0.1
+bcrypt==4.2.0
+PyJWT==2.9.0
+python-multipart==0.0.9
+qrcode[pil]==7.4.2

@@ -1,0 +1,5 @@
+/* Custom app-level overrides */
+.App {
+    min-height: 100dvh;
+    overflow-x: hidden;
+}

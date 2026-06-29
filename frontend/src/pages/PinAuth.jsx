@@ -1,0 +1,369 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  InputOTP, InputOTPGroup, InputOTPSlot,
+} from "@/components/ui/input-otp";
+import { toast } from "sonner";
+import { Cpu, ArrowRight, ShieldCheck, Loader2, WifiOff, Eye, EyeOff } from "lucide-react";
+
+export default function PinAuth() {
+  const navigate = useNavigate();
+  const { setupStatus, setupPin, loginPin, loginEmail, formatApiErrorDetail, loading } = useAuth();
+
+  // mode: "login" | "setup" | "email-login"
+  const [mode, setMode] = useState("login");
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [shopName, setShopName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  // setup steps: 1=shop name + credentials, 2=set PIN, 3=confirm PIN
+  const [step, setStep] = useState(1);
+
+  useEffect(() => {
+    if (!setupStatus) return;
+    if (setupStatus.needs_setup) setMode("setup");
+    else setMode("login");
+  }, [setupStatus]);
+
+  const friendlyError = (err) => {
+    if (!err.response) return "Cannot reach server — is the backend running on port 8001?";
+    return formatApiErrorDetail(err.response?.data?.detail) || err.message || "Something went wrong";
+  };
+
+  // ── PIN Login ──────────────────────────────────────────────────────────────
+  const handleLogin = async (enteredPin) => {
+    setError(""); setSubmitting(true);
+    try {
+      await loginPin(enteredPin);
+      toast.success("Welcome back");
+      navigate("/dashboard");
+    } catch (err) {
+      setError(friendlyError(err));
+      setPin("");
+    } finally { setSubmitting(false); }
+  };
+
+  const handleLoginPinChange = (value) => {
+    setPin(value); setError("");
+    if (value.length === 4 && !submitting) handleLogin(value);
+  };
+
+  // ── Email Login (fallback when JWT expires) ────────────────────────────────
+  const handleEmailLogin = async (e) => {
+    e.preventDefault();
+    if (!email.trim() || !password) { setError("Enter email and password"); return; }
+    setSubmitting(true); setError("");
+    try {
+      await loginEmail(email.trim(), password);
+      toast.success("Welcome back");
+      navigate("/dashboard");
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally { setSubmitting(false); }
+  };
+
+  // ── Setup flow ─────────────────────────────────────────────────────────────
+  const handleSetupStep1 = (e) => {
+    e?.preventDefault();
+    if (!shopName.trim()) { setError("Shop name is required"); return; }
+    if (email && !email.includes("@")) { setError("Enter a valid email"); return; }
+    if (email && password && password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (email && password && password !== confirmPassword) { setError("Passwords do not match"); return; }
+    setError(""); setStep(2);
+  };
+
+  const handleSetupPinChange = (value) => {
+    setPin(value); setError("");
+    if (value.length === 4) setStep(3);
+  };
+
+  const handleConfirmPinChange = (value) => {
+    setConfirmPin(value); setError("");
+    if (value.length === 4 && !submitting) handleSetupComplete(value);
+  };
+
+  const handleSetupComplete = async (finalPin) => {
+    setError("");
+    if (finalPin !== pin) {
+      setError("PINs do not match. Try again.");
+      setConfirmPin(""); setStep(2); setPin(""); return;
+    }
+    setSubmitting(true);
+    try {
+      await setupPin(shopName, finalPin, email || undefined, password || undefined);
+      toast.success(`Welcome, ${shopName}`);
+      navigate("/dashboard");
+    } catch (err) {
+      setError(friendlyError(err));
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row bg-white">
+      {/* Left visual panel — desktop only */}
+      <div className="hidden md:flex md:w-1/2 relative items-end p-12 bg-zinc-950">
+        <img
+          src="https://images.pexels.com/photos/17489151/pexels-photo-17489151.jpeg"
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover opacity-40"
+        />
+        <div className="absolute inset-0 bg-gradient-to-tr from-zinc-950 via-zinc-950/80 to-transparent" />
+        <div className="relative z-10 text-white max-w-md">
+          <div className="kpi-label text-zinc-400 mb-3">Store Management</div>
+          <h1 className="font-heading text-4xl lg:text-5xl font-bold tracking-tight leading-[1.05] mb-6">
+            Repairs.<br />Ledger.<br />Everything.
+          </h1>
+          <p className="text-sm text-zinc-300 leading-relaxed max-w-sm">
+            LapyTrack — one PIN. Full control. Device repair tracking and financial ledger for laptop shops.
+          </p>
+        </div>
+      </div>
+
+      {/* Right: auth form */}
+      <div className="flex-1 flex items-center justify-center p-6 md:p-8 bg-white">
+        <div className="w-full max-w-sm">
+
+          {setupStatus?.offline && (
+            <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-sm mb-6">
+              <WifiOff className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>Cannot reach backend — is the server running on port 8001?</span>
+            </div>
+          )}
+
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 mb-8">
+            <div className="w-9 h-9 bg-zinc-950 flex items-center justify-center rounded-sm">
+              <Cpu className="w-4 h-4 text-white" strokeWidth={2.5} />
+            </div>
+            <div>
+              <div className="font-heading font-bold text-sm tracking-tight text-zinc-950 leading-tight">LAPYTRACK</div>
+              <div className="text-[9px] tracking-[0.15em] uppercase font-semibold text-zinc-500 leading-tight">Store Manager</div>
+            </div>
+          </div>
+
+          {/* ── PIN LOGIN ── */}
+          {mode === "login" && (
+            <>
+              <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">
+                {setupStatus?.shop_name || "Welcome back"}
+              </h2>
+              <p className="text-sm text-zinc-500 mb-8">Enter your 4-digit PIN to unlock</p>
+
+              <div className="flex justify-center mb-4">
+                <InputOTP maxLength={4} value={pin} onChange={handleLoginPinChange}
+                  disabled={submitting} inputMode="numeric" pattern="^[0-9]+$">
+                  <InputOTPGroup className="gap-2">
+                    {[0,1,2,3].map(i => (
+                      <InputOTPSlot key={i} index={i}
+                        className="w-14 h-14 md:w-16 md:h-16 text-2xl font-bold rounded-sm border-zinc-300 border first:border-l data-[active=true]:ring-2 data-[active=true]:ring-zinc-950" />
+                    ))}
+                  </InputOTPGroup>
+                </InputOTP>
+              </div>
+
+              {submitting && (
+                <div className="flex items-center justify-center text-xs text-zinc-500 mb-3">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Verifying…
+                </div>
+              )}
+              {error && (
+                <div className="text-xs text-center text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              {setupStatus?.has_email && (
+                <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
+                  className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
+                  Forgot PIN? Sign in with email instead
+                </button>
+              )}
+            </>
+          )}
+
+          {/* ── EMAIL LOGIN (fallback) ── */}
+          {mode === "email-login" && (
+            <>
+              <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">Sign in</h2>
+              <p className="text-sm text-zinc-500 mb-8">Use your email and password to access the app</p>
+
+              <form onSubmit={handleEmailLogin} className="space-y-4">
+                <div>
+                  <Label className="kpi-label">Email</Label>
+                  <Input value={email} onChange={e => setEmail(e.target.value)}
+                    type="email" placeholder="you@example.com" autoFocus
+                    className="mt-1.5 rounded-sm border-zinc-300 h-11" />
+                </div>
+                <div>
+                  <Label className="kpi-label">Password</Label>
+                  <div className="relative mt-1.5">
+                    <Input value={password} onChange={e => setPassword(e.target.value)}
+                      type={showPw ? "text" : "password"} placeholder="••••••••"
+                      className="rounded-sm border-zinc-300 h-11 pr-10" />
+                    <button type="button" onClick={() => setShowPw(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700">
+                      {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                {error && (
+                  <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{error}</div>
+                )}
+                <Button type="submit" disabled={submitting} className="w-full rounded-sm bg-zinc-950 h-11">
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
+                </Button>
+              </form>
+              <button onClick={() => { setMode("login"); setError(""); setPassword(""); }}
+                className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-4">
+                ← Back to PIN login
+              </button>
+            </>
+          )}
+
+          {/* ── SETUP MODE ── */}
+          {mode === "setup" && (
+            <>
+              <div className="flex items-center gap-1.5 mb-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="kpi-label">First-time Setup</span>
+              </div>
+              <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">
+                {step === 1 && "Create your account"}
+                {step === 2 && "Set your PIN"}
+                {step === 3 && "Confirm PIN"}
+              </h2>
+              <p className="text-sm text-zinc-500 mb-6">
+                {step === 1 && "Your shop name and login credentials."}
+                {step === 2 && "Pick a 4-digit PIN for quick daily access."}
+                {step === 3 && "Enter the PIN again to confirm."}
+              </p>
+
+              {/* Step dots */}
+              <div className="flex gap-1.5 mb-7">
+                {[1,2,3].map(s => (
+                  <div key={s} className={`h-1 flex-1 rounded-full transition-colors ${s <= step ? "bg-zinc-950" : "bg-zinc-200"}`} />
+                ))}
+              </div>
+
+              {step === 1 && (
+                <form onSubmit={handleSetupStep1} className="space-y-4">
+                  <div>
+                    <Label className="kpi-label">Shop name *</Label>
+                    <Input value={shopName} onChange={e => setShopName(e.target.value)} autoFocus
+                      placeholder="e.g. Krish Computer" className="mt-1.5 rounded-sm border-zinc-300 h-11" />
+                  </div>
+                  <div className="pt-1 border-t border-zinc-100">
+                    <p className="text-xs text-zinc-400 mb-3">
+                      Optional — add email + password so you can sign in from any device if your PIN is forgotten.
+                    </p>
+                    <div className="space-y-3">
+                      <div>
+                        <Label className="kpi-label">Email <span className="text-zinc-400 font-normal">(optional)</span></Label>
+                        <Input value={email} onChange={e => setEmail(e.target.value)}
+                          type="email" placeholder="you@example.com" className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
+                      </div>
+                      {email && (
+                        <>
+                          <div>
+                            <Label className="kpi-label">Password <span className="text-zinc-400 font-normal">(min 6 chars)</span></Label>
+                            <div className="relative mt-1.5">
+                              <Input value={password} onChange={e => setPassword(e.target.value)}
+                                type={showPw ? "text" : "password"} placeholder="••••••••"
+                                className="rounded-sm border-zinc-300 h-10 text-sm pr-10" />
+                              <button type="button" onClick={() => setShowPw(v => !v)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
+                                {showPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="kpi-label">Confirm password</Label>
+                            <Input value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                              type="password" placeholder="••••••••"
+                              className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {error && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{error}</div>
+                  )}
+                  <Button type="submit" className="w-full bg-zinc-950 hover:bg-zinc-800 text-white rounded-sm h-11">
+                    Continue <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </form>
+              )}
+
+              {step === 2 && (
+                <div className="space-y-4">
+                  <div className="flex justify-center">
+                    <InputOTP maxLength={4} value={pin} onChange={handleSetupPinChange} autoFocus
+                      inputMode="numeric" pattern="^[0-9]+$">
+                      <InputOTPGroup className="gap-2">
+                        {[0,1,2,3].map(i => (
+                          <InputOTPSlot key={i} index={i}
+                            className="w-14 h-14 md:w-16 md:h-16 text-2xl font-bold rounded-sm border-zinc-300 border first:border-l" />
+                        ))}
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+                  <button type="button" onClick={() => { setStep(1); setPin(""); setError(""); }}
+                    className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block">
+                    ← Back
+                  </button>
+                </div>
+              )}
+
+              {step === 3 && (
+                <div className="space-y-4">
+                  <div className="flex justify-center">
+                    <InputOTP maxLength={4} value={confirmPin} onChange={handleConfirmPinChange}
+                      autoFocus disabled={submitting} inputMode="numeric" pattern="^[0-9]+$">
+                      <InputOTPGroup className="gap-2">
+                        {[0,1,2,3].map(i => (
+                          <InputOTPSlot key={i} index={i}
+                            className="w-14 h-14 md:w-16 md:h-16 text-2xl font-bold rounded-sm border-zinc-300 border first:border-l" />
+                        ))}
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+                  {submitting && (
+                    <div className="flex items-center justify-center text-xs text-zinc-500">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Setting up…
+                    </div>
+                  )}
+                  {error && (
+                    <div className="text-xs text-center text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{error}</div>
+                  )}
+                  <button type="button" onClick={() => { setStep(2); setPin(""); setConfirmPin(""); setError(""); }}
+                    className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block">
+                    ← Choose a different PIN
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

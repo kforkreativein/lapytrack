@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LapyTrack Launch Plan</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f8;
+        --panel: #ffffff;
+        --text: #111111;
+        --muted: #686f7a;
+        --line: #dde1e6;
+        --dark: #0b0b0c;
+        --green: #157f3b;
+        --red: #b42318;
+        --blue: #155eef;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+      }
+      header {
+        background: var(--dark);
+        color: white;
+        padding: 44px 24px;
+      }
+      header .wrap,
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #aeb4bd;
+        font-weight: 700;
+      }
+      h1 {
+        margin: 10px 0 12px;
+        font-size: clamp(34px, 6vw, 64px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin: 0 0 14px;
+        font-size: 24px;
+      }
+      h3 {
+        margin: 22px 0 10px;
+        font-size: 16px;
+      }
+      p {
+        margin: 0 0 14px;
+      }
+      main {
+        padding: 24px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 22px;
+      }
+      .card.fast {
+        border-top: 5px solid var(--green);
+      }
+      .card.long {
+        border-top: 5px solid var(--blue);
+      }
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        padding: 11px 0;
+      }
+      .row:last-child {
+        border-bottom: 0;
+      }
+      .label {
+        font-size: 11px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 800;
+      }
+      code,
+      pre {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+      pre {
+        background: #111;
+        color: #f6f7f8;
+        border-radius: 6px;
+        padding: 14px;
+        overflow: auto;
+        font-size: 13px;
+      }
+      .buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 12px 0 4px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        padding: 0 14px;
+        background: var(--dark);
+        color: white;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      a.button.secondary {
+        background: white;
+        color: var(--dark);
+        border: 1px solid var(--line);
+      }
+      .note {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        color: #9a3412;
+        border-radius: 6px;
+        padding: 14px;
+      }
+      .ok {
+        background: #ecfdf3;
+        border: 1px solid #bbf7d0;
+        color: #166534;
+        border-radius: 6px;
+        padding: 14px;
+      }
+      ul {
+        padding-left: 20px;
+        margin-top: 8px;
+      }
+      li {
+        margin: 6px 0;
+      }
+      footer {
+        padding: 24px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 800px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap">
+        <div class="eyebrow">Krish Computer · LapyTrack</div>
+        <h1>Launch Plan</h1>
+        <p>Fastest online launch for the current app, plus the long-term SaaS architecture.</p>
+        <div class="buttons">
+          <a class="button" href="https://vercel.com" target="_blank" rel="noreferrer">Open Vercel</a>
+          <a class="button" href="https://fly.io" target="_blank" rel="noreferrer">Open Fly.io</a>
+          <a class="button" href="https://www.mongodb.com/atlas" target="_blank" rel="noreferrer">Open MongoDB Atlas</a>
+          <a class="button secondary" href="./lapytrack-launch-plan.md">Open Markdown Guide</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid">
+        <article class="card fast">
+          <div class="eyebrow">Path 1</div>
+          <h2>Fastest Launch</h2>
+          <p>Use this when you want the current app online quickly without rewriting the backend.</p>
+          <div class="stack">
+            <div class="row">
+              <div class="label">Frontend</div>
+              <div>Vercel deploys <code>krish-computer-app/frontend</code>.</div>
+            </div>
+            <div class="row">
+              <div class="label">Backend</div>
+              <div>Fly.io or Render runs the existing FastAPI Docker app.</div>
+            </div>
+            <div class="row">
+              <div class="label">Database</div>
+              <div>MongoDB Atlas works with the current MongoDB code.</div>
+            </div>
+            <div class="row">
+              <div class="label">Storage</div>
+              <div>Start with Fly volume; move to R2/S3/Supabase Storage for SaaS.</div>
+            </div>
+          </div>
+
+          <h3>Frontend Environment</h3>
+          <pre>REACT_APP_BACKEND_URL=https://lapytrack-api.fly.dev</pre>
+          <p class="note">Do not include <code>/api</code>. The app code appends <code>/api</code> itself.</p>
+
+          <h3>Backend Environment</h3>
+          <pre>MONGO_URL=mongodb+srv://USERNAME:PASSWORD@cluster.mongodb.net/?retryWrites=true&amp;w=majority
+DB_NAME=krish_computer
+JWT_SECRET=long-random-production-secret
+FRONTEND_URL=https://your-frontend.vercel.app
+CORS_ORIGINS=https://your-frontend.vercel.app</pre>
+
+          <h3>Fly.io Deploy Commands</h3>
+          <pre>cd krish-computer-app/backend
+fly secrets set MONGO_URL="mongodb+srv://..."
+fly secrets set DB_NAME="krish_computer"
+fly secrets set JWT_SECRET="long-random-production-secret"
+fly secrets set FRONTEND_URL="https://your-frontend.vercel.app"
+fly secrets set CORS_ORIGINS="https://your-frontend.vercel.app"
+fly deploy</pre>
+        </article>
+
+        <article class="card long">
+          <div class="eyebrow">Path 2</div>
+          <h2>Long-Term SaaS</h2>
+          <p>Use this when the app needs multiple shops, subscriptions, isolated data, and durable file storage.</p>
+          <div class="stack">
+            <div class="row">
+              <div class="label">Frontend</div>
+              <div>Vercel, Netlify, or Cloudflare Pages.</div>
+            </div>
+            <div class="row">
+              <div class="label">Auth</div>
+              <div>Supabase Auth with shop membership and roles.</div>
+            </div>
+            <div class="row">
+              <div class="label">Database</div>
+              <div>Supabase Postgres with Row Level Security.</div>
+            </div>
+            <div class="row">
+              <div class="label">Storage</div>
+              <div>Supabase Storage or Cloudflare R2 for uploaded photos.</div>
+            </div>
+            <div class="row">
+              <div class="label">Billing</div>
+              <div>Stripe subscriptions by shop.</div>
+            </div>
+          </div>
+
+          <h3>Required SaaS Tables</h3>
+          <ul>
+            <li><code>shops</code></li>
+            <li><code>users</code></li>
+            <li><code>shop_members</code></li>
+            <li><code>devices</code></li>
+            <li><code>movements</code></li>
+            <li><code>customers</code></li>
+            <li><code>transactions</code></li>
+            <li><code>files</code></li>
+            <li><code>subscriptions</code></li>
+          </ul>
+
+          <p class="ok">Every business record should include <code>shop_id</code>. That is the core of SaaS data isolation.</p>
+
+          <h3>Migration Note</h3>
+          <p>Supabase can power the SaaS version, but the current app is FastAPI + MongoDB. Moving fully to Supabase requires a planned data-layer migration.</p>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top:18px;">
+        <h2>Launch Checklist</h2>
+        <ul>
+          <li>Push code to GitHub.</li>
+          <li>Create MongoDB Atlas cluster.</li>
+          <li>Deploy backend to Fly.io or Render.</li>
+          <li>Set backend env vars and explicit <code>CORS_ORIGINS</code>.</li>
+          <li>Deploy frontend to Vercel.</li>
+          <li>Set <code>REACT_APP_BACKEND_URL</code> to backend origin only.</li>
+          <li>Test PIN login, inward job creation, QR job sheet, Khata Book, reports, and photo uploads.</li>
+          <li>Confirm uploaded files survive backend restart.</li>
+        </ul>
+        <div class="buttons">
+          <a class="button" href="https://render.com" target="_blank" rel="noreferrer">Open Render</a>
+          <a class="button" href="https://www.cloudflare.com/developer-platform/products/r2/" target="_blank" rel="noreferrer">Open Cloudflare R2</a>
+          <a class="button" href="https://supabase.com" target="_blank" rel="noreferrer">Open Supabase</a>
+          <a class="button" href="https://stripe.com" target="_blank" rel="noreferrer">Open Stripe</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Files: <code>docs/lapytrack-launch-plan.md</code> and <code>docs/lapytrack-launch-plan.html</code>
+    </footer>
+  </body>
+</html>
