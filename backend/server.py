@@ -372,7 +372,7 @@ async def _create_shop_account(payload: PinSetupIn, response: Response, *, legac
     token = create_token(user_id, payload.shop_name.strip())
     set_auth_cookie(response, token)
     cfg = await get_app_config(shop_id)
-    return {"user": _public_user(user, cfg)}
+    return {"user": _public_user(user, cfg), "token": token}
 
 @api_router.post("/auth/setup")
 async def setup_pin(payload: PinSetupIn, response: Response):
@@ -409,7 +409,7 @@ async def login_email(payload: EmailLoginIn, response: Response):
     cfg = await get_app_config(user_shop_id(user))
     token = create_token(user["user_id"], user.get("name", ""))
     set_auth_cookie(response, token)
-    return {"user": _public_user(user, cfg)}
+    return {"user": _public_user(user, cfg), "token": token}
 
 @api_router.post("/auth/login")
 async def login_pin_disabled():

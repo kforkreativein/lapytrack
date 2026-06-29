@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
-import { api, formatApiErrorDetail } from "@/lib/api";
+import { api, formatApiErrorDetail, saveToken } from "@/lib/api";
 
 const PIN_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const STORAGE_KEY = "kc_unlocked_at";
@@ -86,6 +86,7 @@ export function AuthProvider({ children }) {
     if (email && password) { body.email = email; body.password = password; }
     const path = register ? "/auth/register" : "/auth/setup";
     const { data } = await api.post(path, body);
+    if (data.token) saveToken(data.token);
     sessionStorage.setItem(ONBOARDING_FLAG, "1");
     setUser(data.user);
     setSetupStatus({ needs_setup: false, has_email: true, allow_register: true });
@@ -96,6 +97,7 @@ export function AuthProvider({ children }) {
 
   const loginEmail = async (email, password) => {
     const { data } = await api.post("/auth/login-email", { email, password });
+    if (data.token) saveToken(data.token);
     setUser(data.user);
     markUnlocked();
     startPinTimer();
@@ -131,6 +133,7 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch { /* ignore */ }
     sessionStorage.removeItem(STORAGE_KEY);
+    saveToken(null);
     stopPinTimer();
     setUser(null);
     setPinLocked(false);

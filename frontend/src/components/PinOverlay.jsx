@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { pingBackend } from "@/lib/api";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Cpu, Loader2, ShieldAlert } from "lucide-react";
 
@@ -8,6 +9,8 @@ export default function PinOverlay() {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => { pingBackend(); }, []);
 
   const handlePinChange = async (value) => {
     setPin(value);
