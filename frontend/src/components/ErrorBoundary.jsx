@@ -20,7 +20,8 @@ export default class ErrorBoundary extends React.Component {
   handleReset = () => {
     this.setState({ hasError: false, error: null });
     if (typeof window !== "undefined") {
-      window.location.href = "/";
+      // Force fresh bundle — avoids stale cached JS after a deploy fix
+      window.location.replace(`/?v=${Date.now()}`);
     }
   };
 

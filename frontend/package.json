@@ -63,6 +63,7 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
+    "build:verify": "yarn build && node scripts/verify-build.js",
     "test": "craco test"
   },
   "browserslist": {

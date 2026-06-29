@@ -41,6 +41,8 @@ export default function PublicJobCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const jobUrl = `${window.location.origin}/job/${id}`;
+
   useEffect(() => {
     (async () => {
       try {
@@ -221,10 +223,18 @@ export default function PublicJobCard() {
                     <div className="font-heading font-bold text-base text-zinc-950 mb-1">
                       Scan to check live status
                     </div>
-	                    <p className="text-sm text-zinc-500 leading-relaxed">
-	                      Share this QR with the customer. Scanning it opens this job sheet with the current repair status.
-	                    </p>
-	                  </div>
+                    <p className="text-sm text-zinc-500 leading-relaxed mb-2">
+                      Share this QR with the customer. Scanning it opens this job sheet with the current repair status.
+                    </p>
+                    <a
+                      href={jobUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-mono text-blue-700 hover:text-blue-900 hover:underline break-all"
+                    >
+                      {jobUrl}
+                    </a>
+                  </div>
                 </div>
               </div>
             ) : (

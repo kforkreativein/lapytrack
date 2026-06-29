@@ -156,7 +156,14 @@ export default function DeviceDetail() {
           <div className="min-w-0 space-y-3">
             <div>
               <div className="kpi-label">Scan Link</div>
-              <div className="mt-1 text-sm font-mono break-all text-zinc-700">{publicJobUrl}</div>
+              <a
+                href={publicJobUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 block text-sm font-mono break-all text-blue-700 hover:text-blue-900 hover:underline"
+              >
+                {publicJobUrl}
+              </a>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div>
