@@ -160,7 +160,12 @@ export default function DeviceDetail() {
           </a>
         </div>
         <div className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-[160px_1fr] gap-5">
-          <div className="w-36 h-36 border border-zinc-200 p-2 bg-white mx-auto md:mx-0" dangerouslySetInnerHTML={{ __html: device.qr_code }} />
+          {device.qr_code
+            ? <div className="w-36 h-36 border border-zinc-200 p-2 bg-white mx-auto md:mx-0" dangerouslySetInnerHTML={{ __html: device.qr_code }} />
+            : <div className="w-36 h-36 border border-zinc-200 p-3 bg-zinc-50 mx-auto md:mx-0 flex items-center justify-center text-center">
+                <span className="text-xs text-zinc-400 leading-relaxed">QR available<br/>when device<br/>is in repair</span>
+              </div>
+          }
           <div className="min-w-0 space-y-3">
             <div>
               <div className="kpi-label">Scan Link</div>
@@ -269,7 +274,7 @@ export default function DeviceDetail() {
       </div>
 
       {/* Repair status */}
-      {device.status !== "issued" && (
+      {true && (
         <div className="border border-zinc-200 mb-6 md:mb-8 bg-white">
           <div className="px-4 md:px-5 py-3 border-b border-zinc-200 bg-zinc-50 flex items-center gap-2">
             <CheckCircle2 className="w-3 h-3" />
@@ -278,9 +283,10 @@ export default function DeviceDetail() {
           <div className="p-4 md:p-5">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
-                { value: "not_started", label: "Not Started", color: "text-zinc-500 border-zinc-300" },
+                { value: "not_started", label: "Not Started", color: "text-zinc-500 border-zinc-300 bg-zinc-50" },
                 { value: "in_progress", label: "In Progress", color: "text-amber-700 border-amber-300 bg-amber-50" },
-                { value: "completed", label: "Completed", color: "text-green-700 border-green-300 bg-green-50" },
+                { value: "completed", label: "Completed", color: "text-blue-700 border-blue-300 bg-blue-50" },
+                { value: "delivered", label: "Delivered", color: "text-green-700 border-green-300 bg-green-50" },
               ].map(s => (
                 <button key={s.value} type="button"
                   onClick={() => handleRepairStatus(s.value)}

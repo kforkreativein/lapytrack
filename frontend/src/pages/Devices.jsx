@@ -11,7 +11,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine, Download } from "lucide-react";
+import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine, Download, FileText } from "lucide-react";
 
 const PERIODS = [
   { value: "all", label: "All Time" },
@@ -201,7 +201,16 @@ export default function Devices() {
                       </div>
                     )}
                   </div>
-                  <span className="text-xs font-semibold text-zinc-950 flex-shrink-0">View →</span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={e => { e.preventDefault(); window.open(`/job/${d.device_id}`, "_blank", "noopener"); }}
+                      className="text-xs text-zinc-500 hover:text-zinc-950 flex items-center gap-1 border border-zinc-200 px-2 py-1 rounded-sm"
+                    >
+                      <FileText className="w-3 h-3" /> Job Sheet
+                    </button>
+                    <span className="text-xs font-semibold text-zinc-950">Detail →</span>
+                  </div>
                 </div>
               </Link>
             ))}
@@ -247,10 +256,16 @@ export default function Devices() {
                       <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link to={`/devices/${d.device_id}`} className="text-xs font-semibold text-zinc-950 hover:underline"
-                            data-testid={`view-device-${d.device_id}`}>
-                        View →
-                      </Link>
+                      <div className="flex items-center justify-end gap-3">
+                        <button type="button" onClick={() => window.open(`/job/${d.device_id}`, "_blank", "noopener")}
+                          className="text-xs text-zinc-500 hover:text-zinc-950 flex items-center gap-1">
+                          <FileText className="w-3 h-3" /> Job Sheet
+                        </button>
+                        <Link to={`/devices/${d.device_id}`} className="text-xs font-semibold text-zinc-950 hover:underline"
+                              data-testid={`view-device-${d.device_id}`}>
+                          Detail →
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import {
   Plus, Search, TrendingUp, TrendingDown, Minus, Users, X,
   UserPlus, IndianRupee, ChevronRight, Download,
-  CalendarDays, Landmark, ArrowLeft, ArrowRight,
+  CalendarDays, Landmark, ArrowLeft, ArrowRight, Pencil, Trash2,
 } from "lucide-react";
 
 function avatarBg(name) {
@@ -329,6 +329,114 @@ function AddEntryDialog({ open, onClose, customers, categories, banks, onSaved, 
   );
 }
 
+// ── Edit Transaction Dialog ───────────────────────────────────────────────────
+function EditTransactionDialog({ txn, banks, categories, customers, onClose, onSaved, onDeleted }) {
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (txn) setForm({ amount: String(txn.amount), type: txn.type, category: txn.category || "Other", payment_method: txn.payment_method || "Cash", note: txn.note || "" });
+  }, [txn]);
+
+  if (!txn) return null;
+
+  const customer = customers.find(c => c.id === txn.customer_id);
+  const typeCategories = categories.filter(c => c.type === form.type || c.type === "both");
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
+    setSaving(true);
+    try {
+      await api.put(`/transactions/${txn.id}`, { amount: amt, type: form.type, category: form.category, payment_method: form.payment_method, note: form.note || null });
+      toast.success("Transaction updated");
+      onSaved();
+    } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await api.delete(`/transactions/${txn.id}`);
+      toast.success("Transaction deleted");
+      onDeleted();
+    } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    finally { setDeleting(false); }
+  };
+
+  return (
+    <Dialog open={!!txn} onOpenChange={open => !open && onClose()}>
+      <DialogContent className="rounded-sm max-w-[calc(100vw-1.5rem)] sm:max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-lg">Edit Transaction</DialogTitle>
+        </DialogHeader>
+        {customer && <div className="text-sm text-zinc-500 -mt-2 mb-1">Customer: <span className="font-medium text-zinc-900">{customer.name}</span></div>}
+        <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <Label className="kpi-label mb-1.5 block">Type *</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setForm(f => ({ ...f, type: "credit", category: "" }))}
+                className={`flex items-center justify-center gap-2 h-10 rounded-sm border text-sm font-semibold transition-colors ${form.type === "credit" ? "bg-green-700 text-white border-green-700" : "border-zinc-300 text-zinc-600 hover:border-green-300"}`}>
+                <TrendingUp className="w-4 h-4" /> You Got
+              </button>
+              <button type="button" onClick={() => setForm(f => ({ ...f, type: "debit", category: "" }))}
+                className={`flex items-center justify-center gap-2 h-10 rounded-sm border text-sm font-semibold transition-colors ${form.type === "debit" ? "bg-red-600 text-white border-red-600" : "border-zinc-300 text-zinc-600 hover:border-red-300"}`}>
+                <TrendingDown className="w-4 h-4" /> You Gave
+              </button>
+            </div>
+          </div>
+          <div>
+            <Label className="kpi-label mb-1.5 block">Amount (₹) *</Label>
+            <div className="relative">
+              <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+              <Input value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                inputMode="decimal" placeholder="0" autoFocus
+                className="pl-9 rounded-sm border-zinc-300 h-12 text-xl font-bold tabular-nums" />
+            </div>
+          </div>
+          <div>
+            <Label className="kpi-label mb-1.5 block">Category</Label>
+            <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+              className="w-full border border-zinc-300 rounded-sm px-3 h-10 text-sm bg-white">
+              {typeCategories.map(c => <option key={c.id || c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </div>
+          {banks.length > 0 && (
+            <div>
+              <Label className="kpi-label mb-1.5 block">Payment Method</Label>
+              <div className="flex flex-wrap gap-2">
+                {banks.map(b => (
+                  <button key={b.bank_id} type="button" onClick={() => setForm(f => ({ ...f, payment_method: b.name }))}
+                    className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${form.payment_method === b.name ? "bg-zinc-950 text-white border-zinc-950" : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"}`}>
+                    {b.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <Label className="kpi-label mb-1.5 block">Note</Label>
+            <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
+              placeholder="Optional note" className="rounded-sm border-zinc-300" />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button type="submit" disabled={saving} className={`flex-1 rounded-sm h-11 text-white ${form.type === "credit" ? "bg-green-700 hover:bg-green-800" : "bg-red-600 hover:bg-red-700"}`}>
+              {saving ? "Saving…" : "Save Changes"}
+            </Button>
+            <Button type="button" variant="outline" disabled={deleting} onClick={handleDelete}
+              className="rounded-sm h-11 border-red-300 text-red-700 hover:bg-red-50 px-3">
+              {deleting ? "…" : <Trash2 className="w-4 h-4" />}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main Ledger page ──────────────────────────────────────────────────────────
 export default function Ledger() {
   const navigate = useNavigate();
@@ -344,17 +452,21 @@ export default function Ledger() {
   const [showAddContact, setShowAddContact] = useState(false);
   const [quickCreateName, setQuickCreateName] = useState("");
   const [preSelectedCustomer, setPreSelectedCustomer] = useState(null);
+  const [ledgerTotals, setLedgerTotals] = useState({ total_credit: 0, total_debit: 0 });
+  const [editTxn, setEditTxn] = useState(null); // transaction being edited
 
   const load = async () => {
     try {
-      const [{ data: c }, { data: cats }, { data: b }] = await Promise.all([
+      const [{ data: c }, { data: cats }, { data: b }, { data: totals }] = await Promise.all([
         api.get("/customers"),
         api.get("/categories"),
         api.get("/catalog/banks"),
+        api.get("/ledger/dashboard"),
       ]);
       setCustomers(c);
       setCategories(cats);
       setBanks(b);
+      setLedgerTotals({ total_credit: totals.total_credit, total_debit: totals.total_debit });
     } finally { setLoading(false); }
   };
 
@@ -447,22 +559,31 @@ export default function Ledger() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 border border-zinc-200 mb-6 animate-fade-up">
+      <div className="grid grid-cols-1 sm:grid-cols-3 border border-zinc-200 mb-6 animate-fade-up">
         <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
-          <div className="kpi-label text-[9px] md:text-[10px]">Customers Owe You</div>
+          <div className="kpi-label text-[9px] md:text-[10px]">Total Income (All Time)</div>
           <div className="flex items-center gap-1.5 mt-1.5">
             <TrendingUp className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
             <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-green-700">
-              ₹{totalGet.toLocaleString("en-IN")}
+              ₹{ledgerTotals.total_credit.toLocaleString("en-IN")}
+            </span>
+          </div>
+        </div>
+        <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
+          <div className="kpi-label text-[9px] md:text-[10px]">Total Expenses (All Time)</div>
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <TrendingDown className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
+            <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-red-600">
+              ₹{ledgerTotals.total_debit.toLocaleString("en-IN")}
             </span>
           </div>
         </div>
         <div className="p-4 md:p-5">
-          <div className="kpi-label text-[9px] md:text-[10px]">You Owe Customers</div>
+          <div className="kpi-label text-[9px] md:text-[10px]">Customers Owe You (Outstanding)</div>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <TrendingDown className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
-            <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-red-600">
-              ₹{totalGive.toLocaleString("en-IN")}
+            <Minus className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
+            <span className={`font-heading text-2xl md:text-3xl font-bold tabular-nums ${totalGet - totalGive >= 0 ? "text-green-700" : "text-red-600"}`}>
+              ₹{Math.abs(totalGet - totalGive).toLocaleString("en-IN")}
             </span>
           </div>
         </div>
@@ -533,10 +654,12 @@ export default function Ledger() {
           <div className="p-6 text-sm text-zinc-500 text-center">No transactions for this date</div>
         ) : (
           <ul className="divide-y divide-zinc-200">
-            {transactions.slice(0, 12).map(t => {
+            {transactions.slice(0, 50).map(t => {
               const customer = customerById[t.customer_id];
               return (
-                <li key={t.id} className="px-4 md:px-5 py-3 flex items-start gap-3">
+                <li key={t.id}
+                  onClick={() => setEditTxn(t)}
+                  className="px-4 md:px-5 py-3 flex items-start gap-3 cursor-pointer hover:bg-zinc-50 transition-colors group">
                   <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-sm ${
                     t.type === "credit" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
                   }`}>
@@ -557,8 +680,11 @@ export default function Ledger() {
                       {t.note && <span className="truncate">{t.note}</span>}
                     </div>
                   </div>
-                  <div className={`font-mono text-sm font-bold flex-shrink-0 text-right ${t.type === "credit" ? "text-green-700" : "text-red-600"}`}>
-                    {t.type === "credit" ? "+" : "-"}₹{fmtAmount(t.amount)}
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className={`font-mono text-sm font-bold text-right ${t.type === "credit" ? "text-green-700" : "text-red-600"}`}>
+                      {t.type === "credit" ? "+" : "-"}₹{fmtAmount(t.amount)}
+                    </div>
+                    <Pencil className="w-3 h-3 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
                   </div>
                 </li>
               );
@@ -623,6 +749,17 @@ export default function Ledger() {
           </ul>
         )}
       </div>
+
+      {/* Edit Transaction Dialog */}
+      <EditTransactionDialog
+        txn={editTxn}
+        banks={banks}
+        categories={categories}
+        customers={customers}
+        onClose={() => setEditTxn(null)}
+        onSaved={() => { setEditTxn(null); load(); setTransactionVersion(v => v + 1); }}
+        onDeleted={() => { setEditTxn(null); load(); setTransactionVersion(v => v + 1); }}
+      />
 
       <AddEntryDialog
         open={showEntry}
