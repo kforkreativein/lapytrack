@@ -27,11 +27,12 @@ export default function PinAuth() {
   const [error, setError] = useState("");
   // setup steps: 1=shop name + credentials, 2=set PIN, 3=confirm PIN
   const [step, setStep] = useState(1);
+  const [isRegister, setIsRegister] = useState(false);
 
   useEffect(() => {
     if (!setupStatus) return;
     if (setupStatus.needs_setup) setMode("setup");
-    else setMode("login");
+    else setMode("email-login");
   }, [setupStatus]);
 
   const friendlyError = (err) => {
@@ -99,7 +100,7 @@ export default function PinAuth() {
     }
     setSubmitting(true);
     try {
-      await setupPin(shopName, finalPin, email.trim(), password);
+      await setupPin(shopName, finalPin, email.trim(), password, { register: isRegister });
       toast.success(`Welcome, ${shopName}`);
       navigate("/dashboard");
     } catch (err) {
@@ -159,13 +160,13 @@ export default function PinAuth() {
             </div>
           </div>
 
-          {/* ── PIN LOGIN ── */}
+          {/* ── PIN LOGIN (quick unlock on this device) ── */}
           {mode === "login" && (
             <>
               <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">
-                {setupStatus?.shop_name || "Welcome back"}
+                Quick unlock
               </h2>
-              <p className="text-sm text-zinc-500 mb-8">Enter your 4-digit PIN to unlock</p>
+              <p className="text-sm text-zinc-500 mb-8">Enter your 4-digit PIN for this device</p>
 
               <div className="flex justify-center mb-4">
                 <InputOTP maxLength={4} value={pin} onChange={handleLoginPinChange}
@@ -190,25 +191,20 @@ export default function PinAuth() {
                 </div>
               )}
 
-              {setupStatus?.has_email ? (
+              {setupStatus?.has_email && (
                 <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
                   className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
                   Sign in with email & password instead
-                </button>
-              ) : (
-                <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
-                  className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
-                  Sign in with email & password
                 </button>
               )}
             </>
           )}
 
-          {/* ── EMAIL LOGIN (fallback) ── */}
+          {/* ── EMAIL LOGIN (primary sign-in) ── */}
           {mode === "email-login" && (
             <>
               <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">Sign in</h2>
-              <p className="text-sm text-zinc-500 mb-8">Use your email and password to access the app</p>
+              <p className="text-sm text-zinc-500 mb-8">Use your shop email and password</p>
 
               <form onSubmit={handleEmailLogin} className="space-y-4">
                 <div>
@@ -238,8 +234,24 @@ export default function PinAuth() {
               </form>
               <button onClick={() => { setMode("login"); setError(""); setPassword(""); }}
                 className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-4">
-                ← Back to PIN login
+                Quick unlock with PIN instead
               </button>
+              {setupStatus?.allow_register && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsRegister(true);
+                    setMode("setup");
+                    setStep(1);
+                    setError("");
+                    setPassword("");
+                    setConfirmPassword("");
+                  }}
+                  className="block text-center w-full text-xs text-zinc-500 hover:text-zinc-950 mt-3 transition-colors"
+                >
+                  Create a new shop account
+                </button>
+              )}
             </>
           )}
 
@@ -248,10 +260,10 @@ export default function PinAuth() {
             <>
               <div className="flex items-center gap-1.5 mb-2">
                 <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
-                <span className="kpi-label">First-time Setup</span>
+                <span className="kpi-label">{isRegister ? "New shop account" : "First-time Setup"}</span>
               </div>
               <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">
-                {step === 1 && "Create your account"}
+                {step === 1 && (isRegister ? "Register your shop" : "Create your account")}
                 {step === 2 && "Set your PIN"}
                 {step === 3 && "Confirm PIN"}
               </h2>
@@ -327,6 +339,15 @@ export default function PinAuth() {
                     className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block">
                     ← Back
                   </button>
+                  {isRegister && (
+                    <button
+                      type="button"
+                      onClick={() => { setIsRegister(false); setMode("email-login"); setStep(1); setError(""); }}
+                      className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block"
+                    >
+                      Back to sign in
+                    </button>
+                  )}
                 </div>
               )}
 

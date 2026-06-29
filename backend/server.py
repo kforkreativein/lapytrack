@@ -107,8 +107,32 @@ def _validate_password(password: str, field: str = "Password") -> None:
     if not password or len(password) < MIN_PASSWORD_LEN:
         raise HTTPException(400, f"{field} must be at least {MIN_PASSWORD_LEN} characters")
 
-async def get_app_config():
+async def get_app_config(shop_id: str | None = None):
+    """Shop config: per-shop doc by shop_id, else legacy single-shop 'main' doc."""
+    if shop_id and shop_id != APP_CONFIG_ID:
+        cfg = await db.app_config.find_one({"shop_id": shop_id})
+        if cfg:
+            return cfg
+        cfg = await db.app_config.find_one({"_id": shop_id})
+        if cfg:
+            return cfg
     return await db.app_config.find_one({"_id": APP_CONFIG_ID})
+
+def _user_has_password(user: dict, cfg: dict | None) -> bool:
+    if user.get("email_hash"):
+        return True
+    return bool(cfg and cfg.get("email_hash"))
+
+def _public_user(user: dict, cfg: dict | None = None) -> dict:
+    """Safe user payload for API responses, including has_email."""
+    out = _safe_user(user)
+    out["has_email"] = _user_has_password(user, cfg)
+    out["email"] = user.get("email") or ((cfg or {}).get("email"))
+    if cfg:
+        out["shop_name"] = cfg.get("shop_name")
+    elif user.get("name"):
+        out["shop_name"] = user.get("name")
+    return out
 
 def user_shop_id(user: dict | None) -> str:
     return (user or {}).get("shop_id") or DEFAULT_SHOP_ID
@@ -299,18 +323,21 @@ class PasswordChangeIn(BaseModel):
 # ── Auth Routes ──────────────────────────────────────────────────────────────
 @api_router.get("/auth/setup-status")
 async def setup_status():
-    cfg = await get_app_config()
-    if not cfg:
-        return {"needs_setup": True, "shop_name": None, "has_email": False}
-    user = await db.users.find_one({"email_hash": {"$exists": True, "$ne": None}}, {"_id": 0, "email": 1})
+    shop_count = await db.app_config.count_documents({})
+    if shop_count == 0:
+        return {"needs_setup": True, "has_email": False, "allow_register": False}
+    has_email_user = await db.users.find_one(
+        {"email_hash": {"$exists": True, "$ne": None}}, {"_id": 0, "email": 1}
+    )
+    legacy_cfg = await get_app_config()
+    has_email = has_email_user is not None or bool(legacy_cfg and legacy_cfg.get("email_hash"))
     return {
         "needs_setup": False,
-        "shop_name": cfg.get("shop_name"),
-        "has_email": user is not None,
+        "has_email": has_email,
+        "allow_register": True,
     }
 
-@api_router.post("/auth/setup")
-async def setup_pin(payload: PinSetupIn, response: Response):
+async def _create_shop_account(payload: PinSetupIn, response: Response, *, legacy_main: bool):
     if not payload.pin.isdigit() or len(payload.pin) != 4:
         raise HTTPException(400, "PIN must be exactly 4 digits")
     if not payload.shop_name.strip():
@@ -318,23 +345,46 @@ async def setup_pin(payload: PinSetupIn, response: Response):
     if not payload.email or "@" not in payload.email:
         raise HTTPException(400, "A valid email is required")
     _validate_password(payload.password)
-    if await get_app_config():
-        raise HTTPException(400, "App already set up")
+    email = payload.email.strip().lower()
+    if await db.users.find_one({"email": email}, {"_id": 0, "user_id": 1}):
+        raise HTTPException(400, "This email is already registered")
     t = now_iso()
     user_id = str(uuid.uuid4())
-    await db.app_config.insert_one({"_id": APP_CONFIG_ID, "shop_id": DEFAULT_SHOP_ID, "shop_name": payload.shop_name.strip(), "created_at": t})
+    shop_id = DEFAULT_SHOP_ID if legacy_main else str(uuid.uuid4())
+    config_id = APP_CONFIG_ID if legacy_main else shop_id
+    await db.app_config.insert_one({
+        "_id": config_id,
+        "shop_id": shop_id,
+        "shop_name": payload.shop_name.strip(),
+        "created_at": t,
+    })
     user = {
-        "user_id": user_id, "shop_id": DEFAULT_SHOP_ID, "name": payload.shop_name.strip(), "role": "admin",
-        "email": payload.email.strip().lower(),
+        "user_id": user_id, "shop_id": shop_id, "name": payload.shop_name.strip(), "role": "admin",
+        "email": email,
         "email_hash": hash_password(payload.password),
         "pin_hash": hash_password(payload.pin),
         "failed_login_attempts": 0, "failed_pin_attempts": 0, "locked_until": None,
         "created_at": t,
     }
-    await db.users.update_one({"user_id": user_id}, {"$set": user}, upsert=True)
+    await db.users.insert_one(user)
+    if not legacy_main:
+        await _seed_shop_catalog(shop_id)
     token = create_token(user_id, payload.shop_name.strip())
     set_auth_cookie(response, token)
-    return {"user": _safe_user(user)}
+    cfg = await get_app_config(shop_id)
+    return {"user": _public_user(user, cfg)}
+
+@api_router.post("/auth/setup")
+async def setup_pin(payload: PinSetupIn, response: Response):
+    if await db.app_config.count_documents({}) > 0:
+        raise HTTPException(400, "A shop already exists — use register to create another account")
+    return await _create_shop_account(payload, response, legacy_main=True)
+
+@api_router.post("/auth/register")
+async def register_shop(payload: PinSetupIn, response: Response):
+    if await db.app_config.count_documents({}) == 0:
+        raise HTTPException(400, "No shops yet — use setup for the first account")
+    return await _create_shop_account(payload, response, legacy_main=False)
 
 @api_router.post("/auth/login-email")
 async def login_email(payload: EmailLoginIn, response: Response):
@@ -342,26 +392,30 @@ async def login_email(payload: EmailLoginIn, response: Response):
     email = payload.email.strip().lower()
     user = await db.users.find_one({"email": email}, {"_id": 0})
     # Generic message — don't reveal whether email exists
-    if not user or not user.get("email_hash"):
+    email_hash = (user or {}).get("email_hash")
+    if user and not email_hash:
+        cfg = await get_app_config(user_shop_id(user))
+        email_hash = (cfg or {}).get("email_hash")
+    if not user or not email_hash:
         await audit_log("auth.login_email_failed", None, ok=False, meta={"email": email})
         raise HTTPException(401, "Incorrect email or password")
     if _is_locked(user):
         raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
-    if not verify_password(payload.password, user["email_hash"]):
+    if not verify_password(payload.password, email_hash):
         await _record_fail(user["user_id"], "failed_login_attempts", MAX_LOGIN_ATTEMPTS)
         await audit_log("auth.login_email_failed", user, ok=False)
         raise HTTPException(401, "Incorrect email or password")
     await _clear_fail(user["user_id"])
+    cfg = await get_app_config(user_shop_id(user))
     token = create_token(user["user_id"], user.get("name", ""))
     set_auth_cookie(response, token)
-    return {"user": _safe_user(user)}
+    return {"user": _public_user(user, cfg)}
 
 @api_router.post("/auth/login")
 async def login_pin(payload: PinLoginIn, response: Response):
     if not payload.pin.isdigit() or len(payload.pin) != 4:
         raise HTTPException(400, "Invalid PIN")
-    cfg = await get_app_config()
-    if not cfg:
+    if await db.app_config.count_documents({}) == 0:
         raise HTTPException(404, "App not set up yet")
     user = await db.users.find_one({"pin_hash": {"$exists": True, "$ne": None}}, {"_id": 0})
     if not user:
@@ -373,9 +427,10 @@ async def login_pin(payload: PinLoginIn, response: Response):
         await audit_log("auth.login_pin_failed", user, ok=False)
         raise HTTPException(401, "Incorrect PIN")
     await _clear_fail(user["user_id"])
+    cfg = await get_app_config(user_shop_id(user))
     token = create_token(user["user_id"], user.get("name", ""))
     set_auth_cookie(response, token)
-    return {"user": _safe_user(user)}
+    return {"user": _public_user(user, cfg)}
 
 @api_router.post("/auth/change-pin")
 async def change_pin(payload: PinChangeIn, user: dict = Depends(get_current_user)):
@@ -384,7 +439,7 @@ async def change_pin(payload: PinChangeIn, user: dict = Depends(get_current_user
     pin_hash = user.get("pin_hash") or ""
     if not pin_hash:
         # Fallback for migrated user whose pin_hash is still in app_config
-        cfg = await get_app_config()
+        cfg = await get_app_config(user_shop_id(user))
         pin_hash = (cfg or {}).get("pin_hash", "")
     if not verify_password(payload.current_pin, pin_hash):
         raise HTTPException(401, "Current PIN is incorrect")
@@ -400,7 +455,7 @@ async def change_password(payload: PasswordChangeIn, user: dict = Depends(get_cu
     _validate_password(payload.new_password, "New password")
     email_hash = user.get("email_hash") or ""
     if not email_hash:
-        cfg = await get_app_config()
+        cfg = await get_app_config(user_shop_id(user))
         email_hash = (cfg or {}).get("email_hash", "")
     if not email_hash:
         raise HTTPException(400, "No password configured")
@@ -424,17 +479,14 @@ async def set_email_password(payload: EmailPasswordUpdateIn, user: dict = Depend
         {"$set": {"email": email, "email_hash": hash_password(payload.password), "updated_at": now_iso()}}
     )
     await audit_log("auth.set_email_password", user)
-    return {"ok": True, "email": email}
+    updated = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    cfg = await get_app_config(user_shop_id(updated))
+    return {"ok": True, "email": email, "user": _public_user(updated, cfg)}
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    cfg = await get_app_config()
-    return {
-        **_safe_user(user),
-        "shop_name": cfg.get("shop_name") if cfg else user.get("name"),
-        "email": user.get("email") or (cfg.get("email") if cfg else None),
-        "has_email": bool(user.get("email_hash")),
-    }
+    cfg = await get_app_config(user_shop_id(user))
+    return _public_user(user, cfg)
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
@@ -1160,8 +1212,23 @@ DEFAULT_ISSUE_CATEGORIES = [
     "Data Recovery", "Speaker Repair", "Trackpad Repair",
     "Power Button Repair", "USB Port Repair", "Display Cable Replacement",
     "BIOS Password Removal", "Liquid Damage Repair", "Network / WiFi Repair",
-    "Software Installation", "Other",
+    "Software Installation",     "Other",
 ]
+
+async def _seed_shop_catalog(shop_id: str):
+    if await db.brands.count_documents({"shop_id": shop_id}) == 0:
+        await db.brands.insert_many([
+            {"brand_id": str(uuid.uuid4()), "shop_id": shop_id, "name": b["name"], "models": b["models"]}
+            for b in DEFAULT_BRANDS
+        ])
+    if await db.issue_categories.count_documents({"shop_id": shop_id}) == 0:
+        await db.issue_categories.insert_many([
+            {"category_id": str(uuid.uuid4()), "shop_id": shop_id, "name": n} for n in DEFAULT_ISSUE_CATEGORIES
+        ])
+    if await db.banks.count_documents({"shop_id": shop_id}) == 0:
+        await db.banks.insert_many([
+            {"bank_id": str(uuid.uuid4()), "shop_id": shop_id, "name": n} for n in DEFAULT_BANKS
+        ])
 
 # ── Catalog Routes ────────────────────────────────────────────────────────────
 class BrandCreate(BaseModel):
@@ -1288,22 +1355,33 @@ async def on_startup():
     await db.audit_logs.create_index([("shop_id", 1), ("created_at", -1)])
     # Migrate: copy credentials from app_config into the user document (old deployments)
     cfg = await db.app_config.find_one({"_id": APP_CONFIG_ID})
-    if cfg and cfg.get("pin_hash"):
+    if cfg:
         existing_user = await db.users.find_one({"user_id": SHOP_USER_ID}, {"_id": 0})
-        if existing_user and not existing_user.get("pin_hash"):
-            logger.info("Migrating credentials from app_config → user document")
-            await db.users.update_one(
-                {"user_id": SHOP_USER_ID},
-                {"$set": {
-                    "email": cfg.get("email", ""),
-                    "shop_id": cfg.get("shop_id") or DEFAULT_SHOP_ID,
-                    "email_hash": cfg.get("email_hash"),
-                    "pin_hash": cfg.get("pin_hash"),
+        if not existing_user:
+            existing_user = await db.users.find_one(
+                {"pin_hash": {"$exists": True, "$ne": None}}, {"_id": 0}
+            )
+        if existing_user:
+            migration_fields: dict = {}
+            if cfg.get("pin_hash") and not existing_user.get("pin_hash"):
+                migration_fields["pin_hash"] = cfg["pin_hash"]
+            if cfg.get("email_hash") and not existing_user.get("email_hash"):
+                migration_fields["email_hash"] = cfg["email_hash"]
+            if cfg.get("email") and not existing_user.get("email"):
+                migration_fields["email"] = cfg["email"]
+            if not existing_user.get("shop_id"):
+                migration_fields["shop_id"] = cfg.get("shop_id") or DEFAULT_SHOP_ID
+            if migration_fields:
+                migration_fields.update({
                     "failed_login_attempts": 0,
                     "failed_pin_attempts": 0,
                     "locked_until": None,
-                }}
-            )
+                })
+                logger.info("Migrating credentials from app_config → user document")
+                await db.users.update_one(
+                    {"user_id": existing_user["user_id"]},
+                    {"$set": migration_fields},
+                )
 
     # Seed catalog if empty
     if await db.brands.count_documents({"shop_id": DEFAULT_SHOP_ID}) == 0:

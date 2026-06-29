@@ -77,7 +77,7 @@ export default function Settings() {
 
   const handleLogout = async () => {
     await logout();
-    navigate("/unlock");
+    navigate("/unlock", { replace: true });
   };
 
   const handleEmailPassword = async (e) => {
@@ -234,7 +234,7 @@ export default function Settings() {
                 <div>
                   <div className="text-sm font-medium">Email & Password</div>
                   <div className="text-xs text-zinc-400 mt-0.5">
-                    {user?.has_email ? user?.email || "Configured" : "Add recovery login"}
+                    {user?.has_email ? (user?.email || "Configured") : (user?.email ? user.email : "Add sign-in email")}
                   </div>
                 </div>
               </div>

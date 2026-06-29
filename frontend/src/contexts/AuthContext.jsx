@@ -81,13 +81,14 @@ export function AuthProvider({ children }) {
     return stopPinTimer;
   }, [refreshSetupStatus, checkAuth, checkPinTimeout, startPinTimer, stopPinTimer]);
 
-  const setupPin = async (shopName, pin, email, password) => {
+  const setupPin = async (shopName, pin, email, password, { register = false } = {}) => {
     const body = { shop_name: shopName, pin };
     if (email && password) { body.email = email; body.password = password; }
-    const { data } = await api.post("/auth/setup", body);
+    const path = register ? "/auth/register" : "/auth/setup";
+    const { data } = await api.post(path, body);
     sessionStorage.setItem(ONBOARDING_FLAG, "1");
     setUser(data.user);
-    setSetupStatus({ needs_setup: false, shop_name: shopName });
+    setSetupStatus({ needs_setup: false, has_email: true, allow_register: true });
     markUnlocked();
     startPinTimer();
     return data.user;
@@ -126,7 +127,11 @@ export function AuthProvider({ children }) {
 
   const setEmailPassword = async (email, password) => {
     const { data } = await api.post("/auth/email-password", { email, password });
-    setUser(prev => prev ? { ...prev, email: data.email, has_email: true } : prev);
+    if (data.user) {
+      setUser(data.user);
+    } else {
+      setUser(prev => prev ? { ...prev, email: data.email, has_email: true } : prev);
+    }
     setSetupStatus(prev => prev ? { ...prev, has_email: true } : prev);
     return data;
   };
