@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,7 @@ export default function CustomerDetail() {
   const [banks, setBanks] = useState([]);
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const [{ data: c }, { data: t }, { data: cats }, { data: b }] = await Promise.all([
         api.get(`/customers/${id}`),
@@ -40,9 +40,9 @@ export default function CustomerDetail() {
       setCategories(cats);
       setBanks(b);
     } finally { setLoading(false); }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = tab === "all" ? txns : txns.filter(t => t.type === tab);
   const balance = txns.reduce((s, t) => t.type === "credit" ? s + t.amount : s - t.amount, 0);
