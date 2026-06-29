@@ -1,0 +1,45 @@
+---
+description: FastAPI backend conventions for LapyTrack
+globs: krish-computer-app/backend/**/*
+alwaysApply: false
+---
+
+# LapyTrack — Backend
+
+## Structure
+- **Single file:** `server.py` (~1100 lines) — all routes, models, startup
+- `requirements.txt` — fastapi, motor, uvicorn, bcrypt, PyJWT, qrcode
+- `Dockerfile` — python:3.11-slim + ca-certificates; `CMD uvicorn server:app --host 0.0.0.0 --port ${PORT}`
+- Root repo `Dockerfile` copies `backend/` for Render
+
+## Config env vars
+```python
+MONGO_URL / MONGODB_URI
+DB_NAME (default: krish_computer_db)
+JWT_SECRET
+FRONTEND_URL (default: https://lapy-track.vercel.app)
+CORS_ORIGINS (comma-separated; credentials require explicit origins)
+```
+
+## Important patterns
+- `enrich_device(doc)` — regenerates QR SVG with current `FRONTEND_URL` on every device read
+- `generate_qr_svg(device_id)` → `{FRONTEND_URL}/job/{device_id}`
+- CORS: `allow_credentials=True` with explicit origins (never `*` + credentials)
+- Public routes (no auth): `GET /api/public/job/{device_id}`, `GET /api/public/files/{path}`
+- Private files: `GET /api/files/{path}` — requires auth
+- Photos saved to `uploads/` + `files` collection metadata
+
+## Auth endpoints
+- `GET /auth/setup-status` — `needs_setup`, `has_email`
+- `POST /auth/setup` — requires shop_name, email, password (6+ chars), pin
+- `POST /auth/login` — PIN
+- `POST /auth/login-email` — email + password
+
+## MongoDB collections
+`app_config`, `users`, `devices`, `movements`, `customers`, `transactions`, `categories`, `brands`, `issue_categories`, `banks`, `files`, `counters`, `reminders`
+
+## Startup (`@app.on_event("startup")`)
+Creates indexes, seeds brands/categories/banks if empty. **Fails deploy if MongoDB unreachable.**
+
+## Local `.env`
+Copy from `.env.example`. Never commit `.env`.

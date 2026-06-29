@@ -1,0 +1,39 @@
+---
+description: LapyTrack project scope, structure, and what to always do
+alwaysApply: true
+---
+
+# LapyTrack — Core Project Rules
+
+## Scope
+- **Only work inside `krish-computer-app/`**. This is the sole active app (LapyTrack / Krish Computer Store Manager).
+- **Do not** use or reference legacy folders at the workspace parent: `DayBook-Tracker/`, `INward-outward/` (removed; were old prototypes).
+- **Git repo:** https://github.com/kforkreativein/lapytrack (branch `main`)
+
+## What the app is
+- Laptop repair shop manager: device inward/outward, job sheets + QR codes, khata ledger, reports, customize catalog
+- **Live frontend:** https://lapy-track.vercel.app
+- **Live backend:** https://lapytrack.onrender.com
+- **Database:** MongoDB Atlas, db name `krish_computer_db`
+
+## Stack
+| Layer | Tech | Location |
+|-------|------|----------|
+| Frontend | React 19, CRA+Craco, Tailwind, Shadcn, React Query, yarn | `frontend/` |
+| Backend | FastAPI, Motor, Uvicorn, single `server.py` | `backend/` |
+| Auth | 4-digit PIN (daily) + email/password (full login); JWT httponly cookie 7 days | `backend/server.py`, `frontend/src/contexts/AuthContext.jsx` |
+
+## Before changing code
+1. Read surrounding files; match existing patterns (minimal diffs)
+2. Never commit `.env`, secrets, or `CLOUD.md` (local-only, gitignored)
+3. Use **yarn** in frontend (not npm) — `packageManager` is yarn
+4. Frontend env var: `REACT_APP_BACKEND_URL` (Vercel Production)
+5. QR codes and job links must use `https://lapy-track.vercel.app`, never `localhost` in production
+
+## Vercel (important)
+- **Use project `frontend` only** — root dir `frontend/`, alias `lapy-track.vercel.app`
+- **Never** create a second Vercel project from repo root (causes duplicate GitHub checks)
+
+## Data persistence
+- **MongoDB:** devices, customers, ledger, auth — persistent
+- **Render disk (`backend/uploads/`):** photos are **ephemeral** on free tier (lost on redeploy). Prefer cloud storage for permanent images (future work)

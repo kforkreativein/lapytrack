@@ -1,0 +1,39 @@
+---
+description: React frontend conventions for LapyTrack
+globs: krish-computer-app/frontend/**/*
+alwaysApply: false
+---
+
+# LapyTrack — Frontend
+
+## Key files
+- `src/App.js` — routes; `/job/:id` is public job sheet (no auth)
+- `src/lib/api.js` — axios instance, `API`, `publicFileUrl(path)` for job sheet photos
+- `src/contexts/AuthContext.jsx` — PIN lock, setup, email login
+- `src/pages/PinAuth.jsx` — setup (shop + email + password + PIN) and login
+- `src/pages/PublicJobCard.jsx` — printable job sheet; use `publicFileUrl` for photos
+- `src/pages/DeviceDetail.jsx` — `PhotoImg` fetches `/api/files/` with auth token
+- `vercel.json` — `yarn install`, `yarn build`, output `build/`
+
+## API client
+```javascript
+import { api, API, publicFileUrl } from "@/lib/api";
+// Authenticated: api.get("/devices")
+// Public job photos: publicFileUrl("uploads/abc.png")
+```
+- `withCredentials: true`, 15s timeout
+- Bearer token from `localStorage.access_token` (fallback to cookie)
+
+## React Query
+- Configured in `src/index.js`: `staleTime: 120_000`, use for dashboard/devices caching
+- Prefer `useQuery` over raw `useEffect` fetch for list pages
+
+## UI
+- Shadcn components in `src/components/ui/`
+- Branding: "KRISH COMPUTER" / "LapyTrack" / `lapytrack-logo.svg`
+- Mobile: bottom tab bar in `Layout.jsx`; desktop sidebar
+
+## Do not
+- Use `react-scripts build` directly — use `yarn build` (Craco)
+- Hardcode backend URL — always `process.env.REACT_APP_BACKEND_URL`
+- Point QR/job URLs at `localhost` in production builds

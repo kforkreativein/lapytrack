@@ -1,0 +1,56 @@
+---
+description: Deployment, env vars, and production URLs for LapyTrack
+alwaysApply: true
+---
+
+# LapyTrack — Deployment
+
+## Production URLs
+| Service | URL |
+|---------|-----|
+| Frontend | https://lapy-track.vercel.app |
+| Backend API | https://lapytrack.onrender.com |
+| Health check | https://lapytrack.onrender.com/api/ |
+| GitHub | https://github.com/kforkreativein/lapytrack |
+
+## Auto-deploy flow
+Push to `main` → Render rebuilds backend (Docker, root `Dockerfile`) → Vercel rebuilds frontend (project `frontend`, root dir `frontend/`)
+
+## Backend env (Render dashboard)
+```
+MONGO_URL=mongodb+srv://...
+DB_NAME=krish_computer_db
+JWT_SECRET=<strong-random-string>
+FRONTEND_URL=https://lapy-track.vercel.app
+CORS_ORIGINS=https://lapy-track.vercel.app
+```
+
+## Frontend env (Vercel → project `frontend` → Production)
+```
+REACT_APP_BACKEND_URL=https://lapytrack.onrender.com
+```
+
+## MongoDB Atlas
+- Network Access must allow `0.0.0.0/0` (Render has dynamic IPs)
+- Menu: **SECURITY → Database & Network Access → IP Access List**
+
+## Render free tier
+- Sleeps after ~15 min idle → first request can take 30–60s
+- Use UptimeRobot pinging `/api/` every 5 min to keep warm (optional)
+- After MongoDB whitelist changes, **Manual Deploy** on Render if backend still down
+
+## Local dev
+```bash
+# Backend (port 8000)
+cd backend && source .venv/bin/activate && uvicorn server:app --reload --port 8000
+
+# Frontend (port 3000)
+cd frontend && yarn start
+# .env.local: REACT_APP_BACKEND_URL=http://localhost:8000
+```
+
+## Troubleshooting checklist
+1. Backend 502/timeout → Render logs, MongoDB IP whitelist, `MONGO_URL`
+2. Frontend can't reach API → `REACT_APP_BACKEND_URL` on Vercel, redeploy frontend
+3. Login/cookies fail → `CORS_ORIGINS` + `FRONTEND_URL` on Render; cookies use `secure=True` when HTTPS
+4. Job sheet photos 404 → file may be gone after Render redeploy (ephemeral uploads)
