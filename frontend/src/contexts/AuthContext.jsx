@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
-import { api, formatApiErrorDetail, saveToken } from "@/lib/api";
+import { api, formatApiErrorDetail, saveToken, pingBackend } from "@/lib/api";
 
 const PIN_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const STORAGE_KEY = "kc_unlocked_at";
@@ -73,6 +73,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    pingBackend(); // wake Render cold start immediately on any page load
     (async () => {
       const [, userData] = await Promise.all([refreshSetupStatus(), checkAuth()]);
       if (userData) { checkPinTimeout(); startPinTimer(); }

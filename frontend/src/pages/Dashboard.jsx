@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Boxes, ArrowDownToLine, ArrowUpFromLine, AlertTriangle,
-  Wrench, Laptop, Monitor, Download, Plus, TrendingUp, TrendingDown, IndianRupee,
+  Download, Plus, TrendingUp, TrendingDown, IndianRupee, RefreshCw,
 } from "lucide-react";
 
 function KpiCard({ label, value, icon: Icon, tone = "default", testId }) {
@@ -38,15 +39,27 @@ function formatDate(iso) {
 function fmt(n) { return `₹${Number(n || 0).toLocaleString("en-IN")}`; }
 
 export default function Dashboard() {
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const queryClient = useQueryClient();
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery({
     queryKey: ["stats"],
     queryFn: async () => (await api.get("/stats")).data,
+    retry: 2,
+    retryDelay: 5000,
   });
   const { data: ledger, isLoading: ledgerLoading } = useQuery({
     queryKey: ["ledger-dashboard"],
     queryFn: async () => (await api.get("/ledger/dashboard")).data,
+    retry: 2,
+    retryDelay: 5000,
   });
   const loading = statsLoading || ledgerLoading || !stats;
+
+  const [slowLoad, setSlowLoad] = useState(false);
+  useEffect(() => {
+    if (!loading) { setSlowLoad(false); return; }
+    const t = setTimeout(() => setSlowLoad(true), 8000);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   const handleExport = async () => {
     const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/devices/export/csv`, {
@@ -88,7 +101,27 @@ export default function Dashboard() {
       </div>
 
       {loading ? (
-        <div className="text-sm text-zinc-500">Loading…</div>
+        <div className="flex flex-col items-start gap-3 py-4">
+          <div className="text-sm text-zinc-500">Loading…</div>
+          {slowLoad && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-sm max-w-sm">
+              Backend is waking up — this takes up to 60 seconds on first visit. Hang tight.
+              <button
+                onClick={() => queryClient.invalidateQueries()}
+                className="ml-2 underline font-medium hover:text-amber-900"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      ) : statsError ? (
+        <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-sm max-w-sm flex items-center gap-2">
+          Failed to load data.
+          <button onClick={() => queryClient.invalidateQueries()} className="underline font-medium flex items-center gap-1 hover:text-red-900">
+            <RefreshCw className="w-3 h-3" /> Retry
+          </button>
+        </div>
       ) : (
         <>
           {/* KPI grid */}
