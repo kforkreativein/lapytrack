@@ -9,6 +9,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os, uuid, logging, io, csv, hashlib, re
+from bson import Binary
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
@@ -479,13 +480,13 @@ async def upload_photo(file: UploadFile = File(...), user: dict = Depends(get_cu
     filename = f"{uuid.uuid4().hex}.{ext}"
     data = await file.read()
     if len(data) > 8 * 1024 * 1024: raise HTTPException(400, "File too large (max 8MB)")
-    dest = UPLOADS_DIR / filename
-    dest.write_bytes(data)
     storage_path = f"uploads/{filename}"
+    # ponytail: store bytes in MongoDB so files survive Render restarts (ephemeral disk)
     await db.files.insert_one({
         "id": str(uuid.uuid4()), "storage_path": storage_path,
         "original_filename": file.filename, "content_type": file.content_type,
-        "size": len(data), "owner": user["user_id"], "is_deleted": False, "created_at": now_iso(),
+        "size": len(data), "owner": user["user_id"], "is_deleted": False,
+        "created_at": now_iso(), "data": Binary(data),
     })
     return {"path": storage_path}
 
@@ -511,10 +512,14 @@ async def serve_file_public(path: str):
 async def _read_stored_file(path: str):
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record: raise HTTPException(404, "File not found")
+    content_type = record.get("content_type", "application/octet-stream")
+    if record.get("data"):
+        return FastAPIResponse(content=bytes(record["data"]), media_type=content_type)
+    # fallback: disk (old files uploaded before this change)
     filename = path.split("/")[-1]
     file_path = UPLOADS_DIR / filename
-    if not file_path.exists(): raise HTTPException(404, "File not found on disk")
-    return FastAPIResponse(content=file_path.read_bytes(), media_type=record.get("content_type", "application/octet-stream"))
+    if not file_path.exists(): raise HTTPException(404, "File not found")
+    return FastAPIResponse(content=file_path.read_bytes(), media_type=content_type)
 
 # ── Ledger: Customers ─────────────────────────────────────────────────────────
 DEFAULT_CATEGORIES = [
