@@ -1412,9 +1412,9 @@ async def shutdown_db_client():
 
 app.include_router(api_router)
 
-@app.get("/health", include_in_schema=False)
+@app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
 async def health():
-    """Plain 200 OK — used by UptimeRobot to keep Render warm. No auth, no redirect."""
+    """Plain 200 OK — UptimeRobot uses HEAD by default; must not return 405."""
     return {"ok": True}
 
 # ponytail: explicit origins required for credentials; '*' breaks withCredentials
