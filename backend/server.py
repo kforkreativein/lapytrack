@@ -61,8 +61,8 @@ def create_token(user_id: str, name: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 def set_auth_cookie(response: Response, token: str):
-    # secure=False + samesite=lax works on http://localhost
-    response.set_cookie("access_token", token, httponly=True, secure=False,
+    use_secure = FRONTEND_URL.startswith("https://")
+    response.set_cookie("access_token", token, httponly=True, secure=use_secure,
                         samesite="lax", max_age=7*24*3600, path="/")
 
 async def get_app_config():
