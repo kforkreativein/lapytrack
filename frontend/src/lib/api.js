@@ -22,7 +22,7 @@ export function publicFileUrl(path) {
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,
-  timeout: 15000,
+  timeout: 45000,
 });
 
 // Attach stored token as Authorization header (fallback for mobile where cross-origin cookies are blocked)

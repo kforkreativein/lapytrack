@@ -19,17 +19,31 @@ import Onboarding, { useOnboarding } from "@/components/Onboarding";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Toaster } from "sonner";
 import { Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+
+function AuthLoadingScreen() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-white px-6 text-center">
+      <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+      <p className="text-sm text-zinc-500">Loading…</p>
+      {slow && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-sm max-w-xs">
+          Backend is waking up — first load can take up to 60 seconds on mobile. Please wait.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ProtectedRoute({ children }) {
   const { user, loading, pinLocked } = useAuth();
   const { show: showOnboarding, dismiss: dismissOnboarding } = useOnboarding();
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
-      </div>
-    );
-  }
+  if (loading) return <AuthLoadingScreen />;
   if (!user) return <Navigate to="/unlock" replace />;
   return (
     <Layout>
@@ -42,13 +56,7 @@ function ProtectedRoute({ children }) {
 
 function UnlockGate({ children }) {
   const { user, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
-      </div>
-    );
-  }
+  if (loading) return <AuthLoadingScreen />;
   if (user) return <Navigate to="/dashboard" replace />;
   return children;
 }

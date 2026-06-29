@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Boxes, ArrowDownToLine, ArrowUpFromLine, AlertTriangle,
   Download, Plus, TrendingUp, TrendingDown, IndianRupee, RefreshCw,
+  Wrench, Laptop, Monitor,
 } from "lucide-react";
 
 function KpiCard({ label, value, icon: Icon, tone = "default", testId }) {
@@ -52,12 +53,12 @@ export default function Dashboard() {
     retry: 2,
     retryDelay: 5000,
   });
-  const loading = statsLoading || ledgerLoading || !stats;
+  const loading = statsLoading;
 
   const [slowLoad, setSlowLoad] = useState(false);
   useEffect(() => {
     if (!loading) { setSlowLoad(false); return; }
-    const t = setTimeout(() => setSlowLoad(true), 8000);
+    const t = setTimeout(() => setSlowLoad(true), 4000);
     return () => clearTimeout(t);
   }, [loading]);
 
@@ -139,7 +140,11 @@ export default function Dashboard() {
           </div>
 
           {/* Financial KPIs */}
-          {ledger && (
+          {ledgerLoading ? (
+            <div className="border border-zinc-200 mb-6 md:mb-10 bg-zinc-50 p-4 md:p-5 text-sm text-zinc-500">
+              Loading financial summary…
+            </div>
+          ) : ledger && (
           <div className="grid grid-cols-1 sm:grid-cols-3 border border-zinc-200 mb-6 md:mb-10 bg-white animate-fade-up">
               <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
                 <div className="kpi-label text-[9px] md:text-[10px]">Net Balance</div>
