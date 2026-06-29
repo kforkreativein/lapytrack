@@ -12,10 +12,10 @@ import { Cpu, ArrowRight, ShieldCheck, Loader2, WifiOff, Eye, EyeOff } from "luc
 
 export default function PinAuth() {
   const navigate = useNavigate();
-  const { setupStatus, setupPin, loginPin, loginEmail, formatApiErrorDetail, loading } = useAuth();
+  const { setupStatus, setupPin, loginEmail, formatApiErrorDetail, loading } = useAuth();
 
-  // mode: "login" | "setup" | "email-login"
-  const [mode, setMode] = useState("login");
+  // mode: "setup" | "email-login"
+  const [mode, setMode] = useState("email-login");
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [shopName, setShopName] = useState("");
@@ -31,8 +31,12 @@ export default function PinAuth() {
 
   useEffect(() => {
     if (!setupStatus) return;
-    if (setupStatus.needs_setup) setMode("setup");
-    else setMode("email-login");
+    if (setupStatus.needs_setup) {
+      setIsRegister(false);
+      setMode("setup");
+    } else {
+      setMode("email-login");
+    }
   }, [setupStatus]);
 
   const friendlyError = (err) => {
@@ -40,25 +44,29 @@ export default function PinAuth() {
     return formatApiErrorDetail(err.response?.data?.detail) || err.message || "Something went wrong";
   };
 
-  // ── PIN Login ──────────────────────────────────────────────────────────────
-  const handleLogin = async (enteredPin) => {
-    setError(""); setSubmitting(true);
-    try {
-      await loginPin(enteredPin);
-      toast.success("Welcome back");
-      navigate("/dashboard");
-    } catch (err) {
-      setError(friendlyError(err));
-      setPin("");
-    } finally { setSubmitting(false); }
+  const startRegister = () => {
+    setIsRegister(true);
+    setMode("setup");
+    setStep(1);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+    setShopName("");
+    setEmail("");
+    setPin("");
+    setConfirmPin("");
   };
 
-  const handleLoginPinChange = (value) => {
-    setPin(value); setError("");
-    if (value.length === 4 && !submitting) handleLogin(value);
+  const backToSignIn = () => {
+    setIsRegister(false);
+    setMode("email-login");
+    setStep(1);
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
   };
 
-  // ── Email Login (fallback when JWT expires) ────────────────────────────────
+  // ── Email Login ────────────────────────────────────────────────────────────
   const handleEmailLogin = async (e) => {
     e.preventDefault();
     if (!email.trim() || !password) { setError("Enter email and password"); return; }
@@ -133,7 +141,7 @@ export default function PinAuth() {
             Repairs.<br />Ledger.<br />Everything.
           </h1>
           <p className="text-sm text-zinc-300 leading-relaxed max-w-sm">
-            LapyTrack — one PIN. Full control. Device repair tracking and financial ledger for laptop shops.
+            LapyTrack — sign in with your shop email. Each store has its own account. Use your PIN only to unlock while already logged in.
           </p>
         </div>
       </div>
@@ -160,47 +168,7 @@ export default function PinAuth() {
             </div>
           </div>
 
-          {/* ── PIN LOGIN (quick unlock on this device) ── */}
-          {mode === "login" && (
-            <>
-              <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">
-                Quick unlock
-              </h2>
-              <p className="text-sm text-zinc-500 mb-8">Enter your 4-digit PIN for this device</p>
-
-              <div className="flex justify-center mb-4">
-                <InputOTP maxLength={4} value={pin} onChange={handleLoginPinChange}
-                  disabled={submitting} inputMode="numeric" pattern="^[0-9]+$">
-                  <InputOTPGroup className="gap-2">
-                    {[0,1,2,3].map(i => (
-                      <InputOTPSlot key={i} index={i}
-                        className="w-14 h-14 md:w-16 md:h-16 text-2xl font-bold rounded-sm border-zinc-300 border first:border-l data-[active=true]:ring-2 data-[active=true]:ring-zinc-950" />
-                    ))}
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
-
-              {submitting && (
-                <div className="flex items-center justify-center text-xs text-zinc-500 mb-3">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> Verifying…
-                </div>
-              )}
-              {error && (
-                <div className="text-xs text-center text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm mb-4">
-                  {error}
-                </div>
-              )}
-
-              {setupStatus?.has_email && (
-                <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
-                  className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
-                  Sign in with email & password instead
-                </button>
-              )}
-            </>
-          )}
-
-          {/* ── EMAIL LOGIN (primary sign-in) ── */}
+          {/* ── EMAIL LOGIN ── */}
           {mode === "email-login" && (
             <>
               <h2 className="font-heading text-3xl font-bold tracking-tight mb-1">Sign in</h2>
@@ -232,25 +200,21 @@ export default function PinAuth() {
                   {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
                 </Button>
               </form>
-              <button onClick={() => { setMode("login"); setError(""); setPassword(""); }}
-                className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-4">
-                Quick unlock with PIN instead
-              </button>
+
               {setupStatus?.allow_register && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRegister(true);
-                    setMode("setup");
-                    setStep(1);
-                    setError("");
-                    setPassword("");
-                    setConfirmPassword("");
-                  }}
-                  className="block text-center w-full text-xs text-zinc-500 hover:text-zinc-950 mt-3 transition-colors"
-                >
-                  Create a new shop account
-                </button>
+                <div className="mt-8 pt-6 border-t border-zinc-200">
+                  <p className="text-sm text-zinc-600 text-center mb-4 font-medium">
+                    Don&apos;t have a shop account yet?
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={startRegister}
+                    className="w-full rounded-sm h-11 border-zinc-300 text-zinc-950 hover:bg-zinc-50 font-medium"
+                  >
+                    Create a new shop account
+                  </Button>
+                </div>
               )}
             </>
           )}
@@ -268,8 +232,8 @@ export default function PinAuth() {
                 {step === 3 && "Confirm PIN"}
               </h2>
               <p className="text-sm text-zinc-500 mb-6">
-                {step === 1 && "Your shop name, email, and password for full sign-in."}
-                {step === 2 && "Pick a 4-digit PIN for quick daily access."}
+                {step === 1 && "Your shop name, email, and password — each shop gets its own login."}
+                {step === 2 && "Pick a 4-digit PIN to unlock the app while you're logged in."}
                 {step === 3 && "Enter the PIN again to confirm."}
               </p>
 
@@ -311,7 +275,7 @@ export default function PinAuth() {
                       className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
                   </div>
                   <p className="text-xs text-zinc-400">
-                    Use email + password to sign in from any device. Your PIN is for quick daily unlock.
+                    Email + password signs you in. PIN only unlocks the app after you&apos;re already logged in.
                   </p>
                   {error && (
                     <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{error}</div>
@@ -319,6 +283,12 @@ export default function PinAuth() {
                   <Button type="submit" className="w-full bg-zinc-950 hover:bg-zinc-800 text-white rounded-sm h-11">
                     Continue <ArrowRight className="w-4 h-4 ml-1" />
                   </Button>
+                  {isRegister && (
+                    <Button type="button" variant="outline" onClick={backToSignIn}
+                      className="w-full rounded-sm h-10 border-zinc-300">
+                      Back to sign in
+                    </Button>
+                  )}
                 </form>
               )}
 
@@ -340,11 +310,8 @@ export default function PinAuth() {
                     ← Back
                   </button>
                   {isRegister && (
-                    <button
-                      type="button"
-                      onClick={() => { setIsRegister(false); setMode("email-login"); setStep(1); setError(""); }}
-                      className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block"
-                    >
+                    <button type="button" onClick={backToSignIn}
+                      className="text-xs text-zinc-500 hover:text-zinc-950 mx-auto block">
                       Back to sign in
                     </button>
                   )}

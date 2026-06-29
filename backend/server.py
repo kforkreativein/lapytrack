@@ -412,25 +412,33 @@ async def login_email(payload: EmailLoginIn, response: Response):
     return {"user": _public_user(user, cfg)}
 
 @api_router.post("/auth/login")
-async def login_pin(payload: PinLoginIn, response: Response):
+async def login_pin_disabled():
+    """PIN cannot identify a shop account — use email sign-in."""
+    raise HTTPException(
+        400,
+        "Sign in with your shop email and password. PIN is only for unlocking an active session.",
+    )
+
+@api_router.post("/auth/unlock-pin")
+async def unlock_pin(payload: PinLoginIn, user: dict = Depends(get_current_user)):
+    """Verify PIN for the already-signed-in user (Lock App / session timeout)."""
     if not payload.pin.isdigit() or len(payload.pin) != 4:
         raise HTTPException(400, "Invalid PIN")
-    if await db.app_config.count_documents({}) == 0:
-        raise HTTPException(404, "App not set up yet")
-    user = await db.users.find_one({"pin_hash": {"$exists": True, "$ne": None}}, {"_id": 0})
-    if not user:
-        raise HTTPException(404, "No user configured")
+    pin_hash = user.get("pin_hash") or ""
+    if not pin_hash:
+        cfg = await get_app_config(user_shop_id(user))
+        pin_hash = (cfg or {}).get("pin_hash", "")
+    if not pin_hash:
+        raise HTTPException(400, "No PIN configured for this account")
     if _is_locked(user):
         raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
-    if not verify_password(payload.pin, user.get("pin_hash", "")):
+    if not verify_password(payload.pin, pin_hash):
         await _record_fail(user["user_id"], "failed_pin_attempts", MAX_PIN_ATTEMPTS)
-        await audit_log("auth.login_pin_failed", user, ok=False)
+        await audit_log("auth.unlock_pin_failed", user, ok=False)
         raise HTTPException(401, "Incorrect PIN")
     await _clear_fail(user["user_id"])
-    cfg = await get_app_config(user_shop_id(user))
-    token = create_token(user["user_id"], user.get("name", ""))
-    set_auth_cookie(response, token)
-    return {"user": _public_user(user, cfg)}
+    await audit_log("auth.unlock_pin", user)
+    return {"ok": True}
 
 @api_router.post("/auth/change-pin")
 async def change_pin(payload: PinChangeIn, user: dict = Depends(get_current_user)):

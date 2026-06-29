@@ -102,17 +102,9 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
-  const loginPin = async (pin) => {
-    const { data } = await api.post("/auth/login", { pin });
-    setUser(data.user);
-    markUnlocked();
-    startPinTimer();
-    return data.user;
-  };
-
-  // 15-min re-lock overlay: verify PIN and reset timer without full page redirect
+  // Session re-lock only — verifies PIN for the signed-in account (not a standalone login)
   const unlockWithPin = async (pin) => {
-    await api.post("/auth/login", { pin });
+    await api.post("/auth/unlock-pin", { pin });
     markUnlocked();
     return true;
   };
@@ -147,7 +139,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, loading, setupStatus, pinLocked,
-      setupPin, loginPin, loginEmail, unlockWithPin, changePin, changePassword, setEmailPassword, logout, lockNow,
+      setupPin, loginEmail, unlockWithPin, changePin, changePassword, setEmailPassword, logout, lockNow,
       refreshSetupStatus, formatApiErrorDetail,
     }}>
       {children}

@@ -4,7 +4,7 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { Cpu, Loader2, ShieldAlert } from "lucide-react";
 
 export default function PinOverlay() {
-  const { unlockWithPin, logout, setupStatus, formatApiErrorDetail } = useAuth();
+  const { unlockWithPin, logout, user, formatApiErrorDetail } = useAuth();
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -43,10 +43,10 @@ export default function PinOverlay() {
         </div>
 
         <h2 className="font-heading text-2xl font-bold tracking-tight mb-1">
-          {setupStatus?.shop_name || "Krish Computer"}
+          {user?.shop_name || user?.name || "Your shop"}
         </h2>
         <p className="text-sm text-zinc-500 mb-8">
-          Enter your PIN to continue
+          Enter your PIN to unlock this session
         </p>
 
         <div className="flex justify-center mb-4">
