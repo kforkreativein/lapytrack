@@ -31,3 +31,8 @@ uploads/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Local planning docs — not for GitHub
+tracker.md
+docs/
+security_best_practices_report.md

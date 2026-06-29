@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowDownToLine, Upload, X, Loader2, User, Phone, Mail, Check, PlusCircle } from "lucide-react";
+import { ArrowDownToLine, X, Loader2, User, Phone, Mail, Check, PlusCircle } from "lucide-react";
 
 export default function InwardForm() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const existingDeviceId = searchParams.get("device");
-  const fileInputRef = useRef();
-
   // Customer
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -46,9 +44,6 @@ export default function InwardForm() {
   const [customIssue, setCustomIssue] = useState("");
   const [issueNotes, setIssueNotes] = useState("");
 
-  // Photos / misc
-  const [photos, setPhotos] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [existingDevice, setExistingDevice] = useState(null);
   const [remarks, setRemarks] = useState("");
@@ -117,26 +112,6 @@ export default function InwardForm() {
     setCustomIssue("");
   };
 
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const { data } = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      setPhotos(p => [...p, { path: data.path, blobUrl: URL.createObjectURL(file) }]);
-      toast.success("Photo uploaded");
-    } catch {
-      toast.error("Upload failed");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  const removePhoto = (idx) => setPhotos(p => p.filter((_, i) => i !== idx));
-
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -174,7 +149,6 @@ export default function InwardForm() {
         customer_email: customerEmail,
         issue_categories: selectedIssues,
         issue_description: issueNotes,
-        photos: photos.map(p => p.path),
       });
       toast.success(`Inward logged · ${data.job_number}`);
       navigate(`/devices/${data.device_id}`);
@@ -466,36 +440,6 @@ export default function InwardForm() {
                   />
                 </div>
 
-                {/* Photos */}
-                <div>
-                  <Label className="kpi-label">Photos</Label>
-                  <div className="mt-1.5 flex flex-wrap gap-3">
-                    {photos.map((p, i) => (
-                      <div key={i} className="relative w-20 h-20 md:w-24 md:h-24 group">
-                        <img src={p.blobUrl} alt="" className="w-full h-full object-cover rounded-sm border border-zinc-200" />
-                        <button
-                          type="button"
-                          onClick={() => removePhoto(i)}
-                          className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-zinc-950 text-white rounded-full flex items-center justify-center"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      data-testid="upload-photo-button"
-                      className="w-20 h-20 md:w-24 md:h-24 border border-dashed border-zinc-300 rounded-sm flex flex-col items-center justify-center text-xs text-zinc-500 hover:bg-zinc-50 transition-colors touch-target"
-                    >
-                      {uploading
-                        ? <Loader2 className="w-4 h-4 animate-spin" />
-                        : <><Upload className="w-4 h-4 mb-1" /><span>Add</span></>}
-                    </button>
-                    <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
-                  </div>
-                </div>
               </div>
             </section>
           </>

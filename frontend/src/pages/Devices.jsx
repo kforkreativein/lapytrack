@@ -1,14 +1,25 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, downloadCsv } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine, Download } from "lucide-react";
+
+const PERIODS = [
+  { value: "all", label: "All Time" },
+  { value: "daily", label: "Today" },
+  { value: "weekly", label: "This Week" },
+  { value: "monthly", label: "This Month" },
+  { value: "annual", label: "This Year" },
+];
 
 function formatShortDate(iso) {
   if (!iso) return "—";
@@ -20,6 +31,18 @@ export default function Devices() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportPeriod, setExportPeriod] = useState("all");
+
+  const doExport = async () => {
+    const params = exportPeriod !== "all" ? `?period=${exportPeriod}` : "";
+    try {
+      const ok = await downloadCsv(`/devices/export/csv${params}`, "devices.csv", "export devices");
+      if (ok) setExportOpen(false);
+    } catch (err) {
+      window.alert(err.message || "Export failed");
+    }
+  };
 
   const { data: devices = [], isLoading: devicesLoading } = useQuery({
     queryKey: ["devices", q, status, category],
@@ -50,12 +73,18 @@ export default function Devices() {
           <h1 className="font-heading text-2xl md:text-4xl font-bold tracking-tight mt-1">Devices</h1>
           <p className="text-sm text-zinc-500 mt-1">{devices.length} total records</p>
         </div>
-        <Link to="/inward" className="w-full md:w-auto">
-          <Button data-testid="add-device-button" className="w-full md:w-auto rounded-sm bg-zinc-950 hover:bg-zinc-800 h-10">
-            <Plus className="w-3.5 h-3.5 mr-1.5" />
-            New Inward
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <Button variant="outline" onClick={() => { setExportPeriod("all"); setExportOpen(true); }}
+            className="w-full sm:w-auto rounded-sm border-zinc-300 h-10 text-xs">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Export CSV
           </Button>
-        </Link>
+          <Link to="/inward" className="w-full sm:w-auto">
+            <Button data-testid="add-device-button" className="w-full rounded-sm bg-zinc-950 hover:bg-zinc-800 h-10">
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
+              New Inward
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 md:gap-3 mb-4">
@@ -230,6 +259,28 @@ export default function Devices() {
           </div>
         </>
       )}
+
+      <Dialog open={exportOpen} onOpenChange={setExportOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-base">Export Devices CSV</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-zinc-500 -mt-2">Filter by inward date range.</p>
+          <div className="grid grid-cols-1 gap-1.5 mt-1">
+            {PERIODS.map(p => (
+              <button key={p.value} onClick={() => setExportPeriod(p.value)}
+                className={`text-left px-3 py-2.5 rounded-sm text-sm border transition-colors ${
+                  exportPeriod === p.value ? "bg-zinc-950 text-white border-zinc-950" : "border-zinc-200 hover:border-zinc-400"
+                }`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <Button onClick={doExport} className="w-full rounded-sm bg-zinc-950 hover:bg-zinc-800 h-10 mt-2">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Download CSV
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

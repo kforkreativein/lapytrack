@@ -1,13 +1,38 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, publicFileUrl } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Loader2, Printer, Calendar, Tag, Info, Phone, Mail, Monitor } from "lucide-react";
+import { Loader2, Printer, Calendar, Tag, Phone, Mail, Monitor } from "lucide-react";
 
 function fmt(iso) {
   if (!iso) return "";
-  try { return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
-  catch { return iso; }
+  try {
+    return new Date(iso).toLocaleDateString("en-IN", {
+      day: "2-digit", month: "long", year: "numeric",
+    });
+  } catch { return iso; }
+}
+
+function StatusPill({ status }) {
+  const styles = {
+    in_repair: "bg-amber-50 text-amber-700 border-amber-200",
+    in_stock:  "bg-green-50 text-green-700 border-green-200",
+    issued:    "bg-zinc-100 text-zinc-600 border-zinc-200",
+    ready:     "bg-blue-50 text-blue-700 border-blue-200",
+  };
+  const labels = {
+    in_repair: "In Repair",
+    in_stock:  "In Stock",
+    issued:    "Issued / Returned",
+    ready:     "Ready for Pickup",
+  };
+  const cls = styles[status] || "bg-zinc-50 text-zinc-500 border-zinc-200";
+  const label = labels[status] || (status || "").replace(/_/g, " ").toUpperCase();
+  return (
+    <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${cls}`}>
+      {label}
+    </span>
+  );
 }
 
 export default function PublicJobCard() {
@@ -27,21 +52,22 @@ export default function PublicJobCard() {
     })();
   }, [id]);
 
-  const handlePrint = () => window.print();
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white p-4">
-              <div className="text-center max-w-sm">
-          <h1 className="font-heading text-xl font-bold mb-2">{error}</h1>
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-6">
+        <div className="text-center max-w-xs">
+          <div className="w-14 h-14 bg-zinc-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Monitor className="w-6 h-6 text-zinc-400" />
+          </div>
+          <h1 className="font-heading text-xl font-bold text-zinc-950 mb-2">{error}</h1>
           <p className="text-sm text-zinc-500">This QR code may be invalid or the device was removed.</p>
         </div>
       </div>
@@ -54,141 +80,168 @@ export default function PublicJobCard() {
         @media print {
           body { margin: 0; background: white; }
           .no-print { display: none !important; }
-          .print-only { display: block !important; }
-          .job-card { max-width: 190mm !important; margin: 0 auto; padding: 8mm; box-shadow: none !important; border: 0 !important; }
+          .job-card { max-width: 190mm !important; margin: 0 auto !important;
+                      padding: 8mm !important; box-shadow: none !important;
+                      border: 1px solid #e4e4e7 !important; border-radius: 0 !important; }
         }
-        .print-only { display: none; }
       `}</style>
 
-      <div className="min-h-screen bg-zinc-50 p-4 md:p-8">
-        <div className="max-w-3xl mx-auto">
-          {/* Print button */}
-          <div className="no-print mb-4 flex justify-end">
-            <Button onClick={handlePrint} variant="outline" className="rounded-sm border-zinc-300 h-10">
-              <Printer className="w-4 h-4 mr-2" /> Print Job Card
-            </Button>
-          </div>
+      <div className="min-h-screen bg-zinc-100">
 
-          {/* Job card */}
-          <div className="job-card bg-white border border-zinc-200 shadow-sm">
-            {/* Header */}
-            <div className="border-b border-zinc-200 pb-5 mb-5 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-8 h-8 bg-zinc-950 flex items-center justify-center text-white text-xs font-bold">
+        {/* Sticky top bar (screen only) */}
+        <div className="no-print sticky top-0 z-10 bg-white border-b border-zinc-200 px-4 py-3 flex items-center justify-between">
+          <span className="font-heading font-bold text-sm tracking-tight text-zinc-950">
+            {device.job_number}
+          </span>
+          <Button onClick={() => window.print()} variant="outline" size="sm"
+            className="rounded-sm border-zinc-300 h-9 text-xs">
+            <Printer className="w-3.5 h-3.5 mr-1.5" /> Print
+          </Button>
+        </div>
+
+        <div className="max-w-xl mx-auto px-4 py-6 md:py-10">
+          <div className="job-card bg-white border border-zinc-200 shadow-sm rounded-xl overflow-hidden">
+
+            {/* ── Dark header ─────────────────────────────────────── */}
+            <div className="bg-zinc-950 text-white px-6 py-6">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center
+                                text-white font-black text-sm tracking-tight flex-shrink-0">
                   KC
+                </div>
+                <div>
+                  <div className="font-heading font-bold text-base tracking-tight leading-tight">
+                    KRISH COMPUTER
                   </div>
-                  <div>
-                    <div className="font-heading text-xs font-bold tracking-tight">KRISH COMPUTER</div>
-                    <div className="text-[8px] text-zinc-500 uppercase tracking-wider">Repair Job Sheet</div>
+                  <div className="text-[10px] text-zinc-400 uppercase tracking-widest leading-tight">
+                    Life Services · Repair Job Sheet
                   </div>
                 </div>
-                <div className="font-heading text-3xl font-bold">{device.job_number}</div>
-                <div className="text-xs text-zinc-500 mt-0.5">Device ID: {device.device_id}</div>
               </div>
-              <div className="w-32 h-32 border border-zinc-200 p-2 bg-white" dangerouslySetInnerHTML={{ __html: device.qr_code }} />
+              <div className="font-heading text-4xl md:text-5xl font-black tracking-tight leading-none">
+                {device.job_number}
+              </div>
+              <div className="text-xs text-zinc-400 mt-2 font-mono">
+                ID: {device.device_id}
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-              {/* Customer */}
-              <section className="border border-zinc-200">
-                <div className="px-4 py-3 border-b border-zinc-200 bg-zinc-50">
-                  <div className="kpi-label">Customer</div>
-                </div>
-                <div className="p-4 space-y-2">
-                  <div className="font-semibold text-sm">{device.customer_name || "—"}</div>
-                  {device.customer_phone && (
-                    <div className="flex items-center gap-1.5 text-xs text-zinc-600">
-                      <Phone className="w-3 h-3" /> {device.customer_phone}
-                    </div>
-                  )}
-                  {device.customer_email && (
-                    <div className="flex items-center gap-1.5 text-xs text-zinc-600 break-all">
-                      <Mail className="w-3 h-3" /> {device.customer_email}
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* Device info */}
-              <section className="border border-zinc-200">
-                <div className="px-4 py-3 border-b border-zinc-200 bg-zinc-50">
-                  <div className="kpi-label flex items-center gap-2"><Monitor className="w-3 h-3" />Device</div>
-                </div>
-                <div className="p-4 space-y-2">
-                  <div className="font-semibold text-sm">{device.brand} {device.model}</div>
-                  <div className="text-xs text-zinc-500">{device.device_type} · {device.category}</div>
-                  {device.serial_number && (
-                    <div className="text-xs text-zinc-500">S/N: {device.serial_number}</div>
-                  )}
-                  {device.condition && (
-                    <div className="text-xs text-zinc-500">Condition: {device.condition}</div>
-                  )}
-                </div>
-              </section>
-            </div>
-
-            {/* Status */}
-            <div className="mb-4 pb-4 border-b border-zinc-100">
-              <div className="kpi-label mb-2">Status</div>
-              <div className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-sm ${
-                device.status === "in_stock" ? "bg-green-50 text-green-700" :
-                device.status === "in_repair" ? "bg-amber-50 text-amber-700" :
-                device.status === "ready" ? "bg-blue-50 text-blue-700" :
-                device.status === "issued" ? "bg-zinc-100 text-zinc-700" : "bg-zinc-50 text-zinc-500"
-              }`}>
-                {device.status.replace("_", " ").toUpperCase()}
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500 mt-2">
-                <Calendar className="w-3 h-3" />
+            {/* ── Status strip ────────────────────────────────────── */}
+            <div className="px-6 py-4 border-b border-zinc-100 flex flex-wrap items-center gap-3">
+              <StatusPill status={device.status} />
+              <div className="flex items-center gap-1.5 text-sm text-zinc-500">
+                <Calendar className="w-4 h-4 flex-shrink-0" />
                 Inward: {fmt(device.inward_date)}
               </div>
+              {device.outward_date && (
+                <div className="flex items-center gap-1.5 text-sm text-zinc-500">
+                  <Calendar className="w-4 h-4 flex-shrink-0" />
+                  Outward: {fmt(device.outward_date)}
+                </div>
+              )}
             </div>
 
-            {/* Issues */}
+            {/* ── Customer ────────────────────────────────────────── */}
+            <div className="px-6 py-5 border-b border-zinc-100">
+              <div className="text-[10px] uppercase tracking-widest font-semibold text-zinc-400 mb-3">
+                Customer
+              </div>
+              <div className="font-heading text-2xl font-bold text-zinc-950 mb-3">
+                {device.customer_name || "—"}
+              </div>
+              <div className="space-y-2">
+                {device.customer_phone && (
+                  <a href={`tel:${device.customer_phone}`}
+                    className="flex items-center gap-2.5 text-base text-zinc-700 hover:text-zinc-950 transition-colors">
+                    <Phone className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                    {device.customer_phone}
+                  </a>
+                )}
+                {device.customer_email && (
+                  <div className="flex items-center gap-2.5 text-sm text-zinc-500 break-all">
+                    <Mail className="w-4 h-4 text-zinc-400 flex-shrink-0" />
+                    {device.customer_email}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ── Device ──────────────────────────────────────────── */}
+            <div className="px-6 py-5 border-b border-zinc-100">
+              <div className="text-[10px] uppercase tracking-widest font-semibold text-zinc-400 mb-3 flex items-center gap-1.5">
+                <Monitor className="w-3 h-3" /> Device
+              </div>
+              <div className="font-heading text-xl font-bold text-zinc-950 mb-1">
+                {device.brand} {device.model}
+              </div>
+              <div className="text-sm text-zinc-500">
+                {device.device_type} · {device.category}
+              </div>
+              {device.serial_number && (
+                <div className="text-sm text-zinc-400 font-mono mt-1">S/N: {device.serial_number}</div>
+              )}
+              {device.condition && (
+                <div className="mt-2 inline-block text-xs bg-zinc-100 text-zinc-600 px-2.5 py-1 rounded-full">
+                  Condition on arrival: {device.condition}
+                </div>
+              )}
+            </div>
+
+            {/* ── Issues ──────────────────────────────────────────── */}
             {(device.issue_categories?.length > 0 || device.issue_description) && (
-              <div className="mb-4 pb-4 border-b border-zinc-100">
-                <div className="kpi-label mb-2">Issues Reported</div>
+              <div className="px-6 py-5 border-b border-zinc-100">
+                <div className="text-[10px] uppercase tracking-widest font-semibold text-zinc-400 mb-3">
+                  Issues Reported
+                </div>
                 {device.issue_categories?.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
+                  <div className="flex flex-wrap gap-2 mb-3">
                     {device.issue_categories.map(cat => (
-                      <div key={cat} className="inline-flex items-center gap-1 bg-zinc-100 text-zinc-700 text-xs px-2 py-0.5 rounded-sm">
-                        <Tag className="w-2.5 h-2.5" /> {cat}
-                      </div>
+                      <span key={cat}
+                        className="inline-flex items-center gap-1.5 bg-zinc-100 text-zinc-700
+                                   text-sm font-medium px-3 py-1.5 rounded-full">
+                        <Tag className="w-3 h-3" /> {cat}
+                      </span>
                     ))}
                   </div>
                 )}
                 {device.issue_description && (
-                  <div className="text-xs text-zinc-600 leading-relaxed">{device.issue_description}</div>
+                  <p className="text-sm text-zinc-600 leading-relaxed">{device.issue_description}</p>
                 )}
               </div>
             )}
 
-            {/* Condition */}
-            {device.condition && (
-              <div className="mb-4 pb-4 border-b border-zinc-100">
-                <div className="kpi-label mb-2">Condition on Arrival</div>
-                <div className="text-xs text-zinc-600 leading-relaxed">{device.condition}</div>
-              </div>
-            )}
-
-            {/* Photos */}
-            {device.photos?.length > 0 && (
-              <div className="mb-4 pb-4 border-b border-zinc-100 no-print">
-                <div className="kpi-label mb-2">Photos</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {device.photos.map((p, i) => (
-                    <img key={i} src={publicFileUrl(p)}
-                      alt={`Device ${i+1}`} className="w-full aspect-square object-cover border border-zinc-200 rounded-sm" />
-                  ))}
+            {/* ── QR Code section ─────────────────────────────────── */}
+            {device.qr_code ? (
+              <div className="px-6 py-6 bg-zinc-50 border-t border-zinc-100">
+                <div className="flex flex-col sm:flex-row items-center gap-5">
+                  <div className="w-36 h-36 md:w-44 md:h-44 bg-white border border-zinc-200
+                                  rounded-xl p-2.5 shadow-sm flex-shrink-0"
+                    dangerouslySetInnerHTML={{ __html: device.qr_code }} />
+                  <div className="text-center sm:text-left">
+                    <div className="font-heading font-bold text-base text-zinc-950 mb-1">
+                      Scan to check live status
+                    </div>
+	                    <p className="text-sm text-zinc-500 leading-relaxed">
+	                      Share this QR with the customer. Scanning it opens this job sheet with the current repair status.
+	                    </p>
+	                  </div>
                 </div>
               </div>
+            ) : (
+              <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-100">
+                <p className="text-xs text-zinc-400 text-center">
+                  QR code available when device is active in the workshop.
+                </p>
+              </div>
             )}
 
-            <div className="pt-2 flex items-start gap-2 text-xs text-zinc-500">
-              <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-              Scan the QR code to reopen this job sheet with current repair status and job details.
+            {/* ── Footer ──────────────────────────────────────────── */}
+            <div className="px-6 py-4 border-t border-zinc-100 text-center">
+              <p className="text-xs text-zinc-400">
+                Krish Computer Life Services · {device.job_number}
+              </p>
             </div>
+
           </div>
         </div>
       </div>

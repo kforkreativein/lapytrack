@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { api, API } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
 import { toast } from "sonner";
@@ -13,29 +13,6 @@ import {
   Printer, QrCode, ExternalLink,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-
-function PhotoImg({ path }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    let url;
-    (async () => {
-      try {
-        const token = localStorage.getItem("access_token");
-        const res = await fetch(`${API}/files/${path}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          credentials: "include",
-        });
-        if (!res.ok) return;
-        const blob = await res.blob();
-        url = URL.createObjectURL(blob);
-        setSrc(url);
-      } catch { /* ignore */ }
-    })();
-    return () => { if (url) URL.revokeObjectURL(url); };
-  }, [path]);
-  if (!src) return <div className="w-20 h-20 md:w-24 md:h-24 bg-zinc-100 animate-pulse rounded-sm" />;
-  return <img src={src} alt="" className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-sm border border-zinc-200" />;
-}
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -275,18 +252,6 @@ export default function DeviceDetail() {
           )}
         </div>
       </div>
-
-      {/* Photos */}
-      {device.photos?.length > 0 && (
-        <div className="border border-zinc-200 mb-6 md:mb-8 bg-white">
-          <div className="px-4 md:px-5 py-3 border-b border-zinc-200 bg-zinc-50">
-            <span className="kpi-label">Photos</span>
-          </div>
-          <div className="p-4 md:p-5 flex flex-wrap gap-3">
-            {device.photos.map((p) => <PhotoImg key={p} path={p} />)}
-          </div>
-        </div>
-      )}
 
       {/* Movement history */}
       <div className="border border-zinc-200 bg-white">

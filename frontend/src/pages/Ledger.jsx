@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, downloadCsv } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -382,12 +382,29 @@ export default function Ledger() {
     }
   };
 
-  const exportContacts = () => {
-    window.location.href = `${api.defaults.baseURL}/customers/export/csv`;
-  };
+  const [exportPeriod, setExportPeriod] = useState("all");
+  const [exportTarget, setExportTarget] = useState(null); // "contacts" | "ledger"
 
-  const exportLedger = () => {
-    window.location.href = `${api.defaults.baseURL}/transactions/export/csv`;
+  const PERIODS = [
+    { value: "all", label: "All Time" },
+    { value: "daily", label: "Today" },
+    { value: "weekly", label: "This Week" },
+    { value: "monthly", label: "This Month" },
+    { value: "annual", label: "This Year" },
+  ];
+
+  const doExport = async () => {
+    const params = exportPeriod !== "all" ? `?period=${exportPeriod}` : "";
+    try {
+      if (exportTarget === "contacts") {
+        await downloadCsv("/customers/export/csv", "contacts.csv", "export contacts");
+      } else {
+        await downloadCsv(`/transactions/export/csv${params}`, "ledger.csv", "export ledger");
+      }
+      setExportTarget(null);
+    } catch (err) {
+      toast.error(err.message || "Export failed");
+    }
   };
 
   const filtered = customers.filter(c =>
@@ -411,11 +428,11 @@ export default function Ledger() {
           <h1 className="font-heading text-2xl md:text-4xl font-bold tracking-tight mt-1">Khata Book</h1>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:w-auto">
-          <Button variant="outline" onClick={exportContacts}
+          <Button variant="outline" onClick={() => setExportTarget("contacts")}
             className="w-full sm:w-auto rounded-sm border-zinc-300 h-10 text-xs">
             <Download className="w-3.5 h-3.5 mr-1.5" /> Contacts CSV
           </Button>
-          <Button variant="outline" onClick={exportLedger}
+          <Button variant="outline" onClick={() => { setExportPeriod("all"); setExportTarget("ledger"); }}
             className="w-full sm:w-auto rounded-sm border-zinc-300 h-10 text-xs">
             <Download className="w-3.5 h-3.5 mr-1.5" /> Ledger CSV
           </Button>
@@ -622,6 +639,27 @@ export default function Ledger() {
         onSaved={handleContactSaved}
         initialName={quickCreateName}
       />
+
+      {/* Export period picker */}
+      <Dialog open={exportTarget === "ledger"} onOpenChange={open => !open && setExportTarget(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-base">Export Ledger CSV</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-zinc-500 -mt-2">Choose the date range to export.</p>
+          <div className="grid grid-cols-1 gap-1.5">
+            {PERIODS.map(p => (
+              <button key={p.value} onClick={() => setExportPeriod(p.value)}
+                className={`text-left px-3 py-2.5 rounded-sm text-sm border transition-colors ${exportPeriod === p.value ? "bg-zinc-950 text-white border-zinc-950" : "border-zinc-200 hover:border-zinc-400"}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <Button onClick={doExport} className="w-full rounded-sm bg-zinc-950 hover:bg-zinc-800 h-10 mt-1">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Download CSV
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

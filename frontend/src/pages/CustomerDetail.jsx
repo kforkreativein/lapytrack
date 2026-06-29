@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, getStepUpHeaders } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,7 +70,9 @@ export default function CustomerDetail() {
 
   const handleDelete = async (txnId) => {
     if (!window.confirm("Delete this transaction?")) return;
-    await api.delete(`/transactions/${txnId}`);
+    const headers = getStepUpHeaders("delete this transaction");
+    if (!headers) return;
+    await api.delete(`/transactions/${txnId}`, { headers });
     toast.success("Deleted");
     load();
   };

@@ -52,6 +52,8 @@ FRONTEND_URL = (os.environ.get('FRONTEND_URL') or 'https://lapy-track.vercel.app
 MAX_LOGIN_ATTEMPTS = 5
 MAX_PIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+DEFAULT_SHOP_ID = os.environ.get("DEFAULT_SHOP_ID", "shop_default")
+MAX_IMPORT_BYTES = int(os.environ.get("MAX_IMPORT_BYTES", str(2 * 1024 * 1024)))
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -108,6 +110,51 @@ def _validate_password(password: str, field: str = "Password") -> None:
 async def get_app_config():
     return await db.app_config.find_one({"_id": APP_CONFIG_ID})
 
+def user_shop_id(user: dict | None) -> str:
+    return (user or {}).get("shop_id") or DEFAULT_SHOP_ID
+
+def scoped_filter(user: dict, extra: Optional[dict] = None) -> dict:
+    """Tenant filter that also sees legacy single-shop records without shop_id."""
+    shop_id = user_shop_id(user)
+    filt: dict = {"$and": [{"$or": [{"shop_id": shop_id}, {"shop_id": {"$exists": False}}]}]}
+    if extra:
+        filt["$and"].append(extra)
+    return filt
+
+def with_shop(user: dict, doc: dict) -> dict:
+    doc["shop_id"] = user_shop_id(user)
+    return doc
+
+async def audit_log(action: str, user: Optional[dict] = None, target: Optional[dict] = None,
+                    ok: bool = True, meta: Optional[dict] = None):
+    entry = {
+        "id": str(uuid.uuid4()),
+        "action": action,
+        "ok": ok,
+        "shop_id": user_shop_id(user),
+        "user_id": (user or {}).get("user_id"),
+        "target": target or {},
+        "meta": meta or {},
+        "created_at": now_iso(),
+    }
+    try:
+        await db.audit_logs.insert_one(entry)
+    except Exception:
+        logger.exception("Failed to write audit log for %s", action)
+
+async def require_step_up(request: Request, user: dict, action: str):
+    """Require current PIN or password for sensitive actions."""
+    pin = request.headers.get("X-Step-Up-Pin", "")
+    password = request.headers.get("X-Step-Up-Password", "")
+    ok = False
+    if pin and verify_password(pin, user.get("pin_hash", "")):
+        ok = True
+    if password and verify_password(password, user.get("email_hash", "")):
+        ok = True
+    if not ok:
+        await audit_log(f"{action}.step_up_failed", user, ok=False)
+        raise HTTPException(403, "Confirm your PIN or password to continue")
+
 async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
@@ -123,6 +170,9 @@ async def get_current_user(request: Request) -> dict:
     user = await db.users.find_one({"user_id": payload["sub"]}, {"_id": 0})
     if not user:
         raise HTTPException(401, "User not found")
+    if not user.get("shop_id"):
+        await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"shop_id": DEFAULT_SHOP_ID}})
+        user["shop_id"] = DEFAULT_SHOP_ID
     return user
 
 def now_iso() -> str:
@@ -210,6 +260,16 @@ def enrich_device(doc: dict | None) -> dict | None:
         out["qr_code"] = None
     return out
 
+def public_device_view(doc: dict) -> dict:
+    enriched = enrich_device(doc) or {}
+    allowed = {
+        "device_id", "job_number", "device_type", "brand", "model", "serial_number",
+        "condition", "category", "customer_name", "customer_phone", "issue_categories",
+        "issue_description", "status", "inward_date", "outward_date", "expected_return_date",
+        "qr_code",
+    }
+    return {k: v for k, v in enriched.items() if k in allowed}
+
 # ── Auth Models ──────────────────────────────────────────────────────────────
 class PinSetupIn(BaseModel):
     shop_name: str
@@ -262,9 +322,9 @@ async def setup_pin(payload: PinSetupIn, response: Response):
         raise HTTPException(400, "App already set up")
     t = now_iso()
     user_id = str(uuid.uuid4())
-    await db.app_config.insert_one({"_id": APP_CONFIG_ID, "shop_name": payload.shop_name.strip(), "created_at": t})
+    await db.app_config.insert_one({"_id": APP_CONFIG_ID, "shop_id": DEFAULT_SHOP_ID, "shop_name": payload.shop_name.strip(), "created_at": t})
     user = {
-        "user_id": user_id, "name": payload.shop_name.strip(), "role": "admin",
+        "user_id": user_id, "shop_id": DEFAULT_SHOP_ID, "name": payload.shop_name.strip(), "role": "admin",
         "email": payload.email.strip().lower(),
         "email_hash": hash_password(payload.password),
         "pin_hash": hash_password(payload.pin),
@@ -283,11 +343,13 @@ async def login_email(payload: EmailLoginIn, response: Response):
     user = await db.users.find_one({"email": email}, {"_id": 0})
     # Generic message — don't reveal whether email exists
     if not user or not user.get("email_hash"):
+        await audit_log("auth.login_email_failed", None, ok=False, meta={"email": email})
         raise HTTPException(401, "Incorrect email or password")
     if _is_locked(user):
         raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
     if not verify_password(payload.password, user["email_hash"]):
         await _record_fail(user["user_id"], "failed_login_attempts", MAX_LOGIN_ATTEMPTS)
+        await audit_log("auth.login_email_failed", user, ok=False)
         raise HTTPException(401, "Incorrect email or password")
     await _clear_fail(user["user_id"])
     token = create_token(user["user_id"], user.get("name", ""))
@@ -308,6 +370,7 @@ async def login_pin(payload: PinLoginIn, response: Response):
         raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
     if not verify_password(payload.pin, user.get("pin_hash", "")):
         await _record_fail(user["user_id"], "failed_pin_attempts", MAX_PIN_ATTEMPTS)
+        await audit_log("auth.login_pin_failed", user, ok=False)
         raise HTTPException(401, "Incorrect PIN")
     await _clear_fail(user["user_id"])
     token = create_token(user["user_id"], user.get("name", ""))
@@ -329,6 +392,7 @@ async def change_pin(payload: PinChangeIn, user: dict = Depends(get_current_user
         {"user_id": user["user_id"]},
         {"$set": {"pin_hash": hash_password(payload.new_pin), "updated_at": now_iso()}}
     )
+    await audit_log("auth.change_pin", user)
     return {"ok": True}
 
 @api_router.post("/auth/change-password")
@@ -346,6 +410,7 @@ async def change_password(payload: PasswordChangeIn, user: dict = Depends(get_cu
         {"user_id": user["user_id"]},
         {"$set": {"email_hash": hash_password(payload.new_password), "updated_at": now_iso()}}
     )
+    await audit_log("auth.change_password", user)
     return {"ok": True}
 
 @api_router.post("/auth/email-password")
@@ -358,6 +423,7 @@ async def set_email_password(payload: EmailPasswordUpdateIn, user: dict = Depend
         {"user_id": user["user_id"]},
         {"$set": {"email": email, "email_hash": hash_password(payload.password), "updated_at": now_iso()}}
     )
+    await audit_log("auth.set_email_password", user)
     return {"ok": True, "email": email}
 
 @api_router.get("/auth/me")
@@ -422,7 +488,7 @@ async def generate_job_number() -> str:
 @api_router.post("/devices")
 async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user)):
     sn = payload.serial_number.strip().upper() if payload.serial_number and payload.serial_number.strip() else None
-    if sn and await db.devices.find_one({"serial_number": sn}):
+    if sn and await db.devices.find_one(scoped_filter(user, {"serial_number": sn})):
         raise HTTPException(400, "Serial number already exists")
     device_id = f"dev_{uuid.uuid4().hex[:12]}"
     job_number = await generate_job_number()
@@ -441,15 +507,15 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "inward_date": t, "outward_date": None, "created_by": user["user_id"],
         "created_at": t, "updated_at": t,
     }
-    await db.devices.insert_one(doc)
-    await db.movements.insert_one({
+    await db.devices.insert_one(with_shop(user, doc))
+    await db.movements.insert_one(with_shop(user, {
         "movement_id": f"mov_{uuid.uuid4().hex[:12]}", "device_id": device_id,
         "job_number": job_number, "movement_type": "inward",
         "customer_name": payload.customer_name, "customer_phone": payload.customer_phone,
         "issue_description": payload.issue_description, "remarks": "",
         "performed_by": user["user_id"], "performed_by_name": user.get("name", ""),
         "created_at": t,
-    })
+    }))
     doc.pop("_id", None)
     return enrich_device(doc)
 
@@ -471,21 +537,24 @@ async def list_devices(status: Optional[str] = None, category: Optional[str] = N
                 {"customer_phone": {"$regex": safe_q, "$options": "i"}},
                 {"job_number": {"$regex": safe_q, "$options": "i"}},
             ]
-    devices = await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    devices = await db.devices.find(scoped_filter(user, filt), {"_id": 0}).sort("created_at", -1).to_list(1000)
     return [enrich_device(d) for d in devices]
 
 @api_router.get("/devices/export/csv")
 async def export_csv(
+    request: Request,
     period: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
+    await require_step_up(request, user, "export.devices_csv")
     filt: dict = {}
     date_rng = _build_date_range(period, start_date, end_date)
     if date_rng:
         filt["inward_date"] = date_rng
-    devices = await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    devices = await db.devices.find(scoped_filter(user, filt), {"_id": 0}).sort("created_at", -1).to_list(5000)
+    await audit_log("export.devices_csv", user, meta={"count": len(devices)})
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["Job No.", "Serial No.", "Type", "Brand", "Model", "Condition", "Category",
@@ -503,7 +572,7 @@ async def export_csv(
 
 @api_router.get("/devices/{device_id}")
 async def get_device(device_id: str, user: dict = Depends(get_current_user)):
-    doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
+    doc = await db.devices.find_one(scoped_filter(user, {"device_id": device_id}), {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
     return enrich_device(doc)
 
@@ -512,27 +581,28 @@ async def get_job_public(device_id: str):
     """Public route — no auth required. Used by QR code scans."""
     doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
-    return enrich_device(doc)
+    return public_device_view(doc)
 
 @api_router.patch("/devices/{device_id}")
 async def update_device(device_id: str, payload: DeviceUpdate, user: dict = Depends(get_current_user)):
     data = {k: v for k, v in payload.model_dump().items() if v is not None}
     if "serial_number" in data: data["serial_number"] = data["serial_number"].upper()
     data["updated_at"] = now_iso()
-    result = await db.devices.update_one({"device_id": device_id}, {"$set": data})
+    result = await db.devices.update_one(scoped_filter(user, {"device_id": device_id}), {"$set": data})
     if result.matched_count == 0: raise HTTPException(404, "Device not found")
-    doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
+    doc = await db.devices.find_one(scoped_filter(user, {"device_id": device_id}), {"_id": 0})
     return enrich_device(doc)
 
 @api_router.delete("/devices/{device_id}")
 async def delete_device(device_id: str, user: dict = Depends(get_current_user)):
-    await db.devices.delete_one({"device_id": device_id})
-    await db.movements.delete_many({"device_id": device_id})
+    await db.devices.delete_one(scoped_filter(user, {"device_id": device_id}))
+    await db.movements.delete_many(scoped_filter(user, {"device_id": device_id}))
+    await audit_log("delete.device", user, {"device_id": device_id})
     return {"ok": True}
 
 @api_router.post("/movements")
 async def create_movement(payload: MovementIn, user: dict = Depends(get_current_user)):
-    device = await db.devices.find_one({"device_id": payload.device_id}, {"_id": 0})
+    device = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
     if not device: raise HTTPException(404, "Device not found")
     mt = payload.movement_type
     if mt not in ("inward", "outward"): raise HTTPException(400, "movement_type must be inward or outward")
@@ -548,7 +618,7 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
         picker_name = picker_phone = pickup_rel = ""
 
     t = now_iso()
-    await db.movements.insert_one({
+    await db.movements.insert_one(with_shop(user, {
         "movement_id": f"mov_{uuid.uuid4().hex[:12]}", "device_id": payload.device_id,
         "job_number": device.get("job_number"), "movement_type": mt,
         "customer_name": device.get("customer_name", ""), "customer_phone": device.get("customer_phone", ""),
@@ -556,7 +626,7 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
         "pickup_relationship": pickup_rel, "expected_return_date": payload.expected_return_date,
         "remarks": payload.remarks or "", "performed_by": user["user_id"],
         "performed_by_name": user.get("name", ""), "created_at": t,
-    })
+    }))
     update = {"status": new_status, "updated_at": t}
     if mt == "outward":
         update.update({"picked_up_by_name": picker_name, "picked_up_by_phone": picker_phone,
@@ -565,29 +635,29 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
     else:
         update.update({"inward_date": t, "picked_up_by_name": "", "picked_up_by_phone": "",
                        "pickup_relationship": "", "expected_return_date": None})
-    await db.devices.update_one({"device_id": payload.device_id}, {"$set": update})
-    doc = await db.devices.find_one({"device_id": payload.device_id}, {"_id": 0})
+    await db.devices.update_one(scoped_filter(user, {"device_id": payload.device_id}), {"$set": update})
+    doc = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
     return enrich_device(doc)
 
 @api_router.get("/movements")
 async def list_movements(device_id: Optional[str] = None, user: dict = Depends(get_current_user)):
     filt = {"device_id": device_id} if device_id else {}
-    return await db.movements.find(filt, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return await db.movements.find(scoped_filter(user, filt), {"_id": 0}).sort("created_at", -1).to_list(2000)
 
 @api_router.get("/stats")
 async def stats(user: dict = Depends(get_current_user)):
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    total = await db.devices.count_documents({})
-    in_stock = await db.devices.count_documents({"status": "in_stock"})
-    issued = await db.devices.count_documents({"status": "issued"})
-    in_repair = await db.devices.count_documents({"status": "in_repair"})
-    laptops = await db.devices.count_documents({"device_type": "Laptop"})
-    desktops = await db.devices.count_documents({"device_type": "Desktop"})
-    overdue = await db.devices.count_documents({
-        "status": "issued", "expected_return_date": {"$lt": now_iso(), "$ne": None}})
-    monthly_inward = await db.movements.count_documents({"movement_type": "inward", "created_at": {"$gte": month_start}})
-    monthly_outward = await db.movements.count_documents({"movement_type": "outward", "created_at": {"$gte": month_start}})
-    recent = await db.movements.find({}, {"_id": 0}).sort("created_at", -1).to_list(8)
+    total = await db.devices.count_documents(scoped_filter(user))
+    in_stock = await db.devices.count_documents(scoped_filter(user, {"status": "in_stock"}))
+    issued = await db.devices.count_documents(scoped_filter(user, {"status": "issued"}))
+    in_repair = await db.devices.count_documents(scoped_filter(user, {"status": "in_repair"}))
+    laptops = await db.devices.count_documents(scoped_filter(user, {"device_type": "Laptop"}))
+    desktops = await db.devices.count_documents(scoped_filter(user, {"device_type": "Desktop"}))
+    overdue = await db.devices.count_documents(scoped_filter(user, {
+        "status": "issued", "expected_return_date": {"$lt": now_iso(), "$ne": None}}))
+    monthly_inward = await db.movements.count_documents(scoped_filter(user, {"movement_type": "inward", "created_at": {"$gte": month_start}}))
+    monthly_outward = await db.movements.count_documents(scoped_filter(user, {"movement_type": "outward", "created_at": {"$gte": month_start}}))
+    recent = await db.movements.find(scoped_filter(user), {"_id": 0}).sort("created_at", -1).to_list(8)
     return {"total": total, "in_stock": in_stock, "issued": issued, "in_repair": in_repair,
             "overdue": overdue, "laptops": laptops, "desktops": desktops,
             "monthly_inward": monthly_inward, "monthly_outward": monthly_outward,
@@ -661,11 +731,11 @@ class ReminderCreate(BaseModel):
 
 @api_router.get("/customers")
 async def list_customers(user: dict = Depends(get_current_user)):
-    customers = await db.customers.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(2000)
     out = []
     for c in customers:
         agg = await db.transactions.aggregate([
-            {"$match": {"customer_id": c["id"]}},
+            {"$match": scoped_filter(user, {"customer_id": c["id"]})},
             {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}},
         ]).to_list(10)
         totals = {row["_id"]: row["total"] for row in agg}
@@ -679,13 +749,13 @@ async def list_customers(user: dict = Depends(get_current_user)):
 async def create_customer(body: CustomerCreate, user: dict = Depends(get_current_user)):
     doc = {"id": str(uuid.uuid4()), "name": body.name, "phone": body.phone,
            "email": body.email, "note": body.note, "avatar_color": body.avatar_color or "#E5E7EB", "created_at": now_iso()}
-    await db.customers.insert_one(doc)
+    await db.customers.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
 @api_router.post("/customers/bulk")
 async def create_customers_bulk(body: BulkCustomerRequest, user: dict = Depends(get_current_user)):
-    existing = await db.customers.find({}, {"_id": 0, "name": 1, "phone": 1}).to_list(5000)
+    existing = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1}).to_list(5000)
     keys = {(c.get("name","").lower().strip(), (c.get("phone") or "").replace(" ","").replace("-","")) for c in existing}
     added = 0
     for item in body.contacts:
@@ -696,13 +766,13 @@ async def create_customers_bulk(body: BulkCustomerRequest, user: dict = Depends(
         keys.add((name.lower(), phone))
         doc = {"id": str(uuid.uuid4()), "name": name, "phone": item.phone or None,
                "note": item.note, "avatar_color": "#E5E7EB", "created_at": now_iso()}
-        await db.customers.insert_one(doc)
+        await db.customers.insert_one(with_shop(user, doc))
         added += 1
     return {"added": added}
 
 @api_router.get("/customers/{customer_id}")
 async def get_customer(customer_id: str, user: dict = Depends(get_current_user)):
-    doc = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    doc = await db.customers.find_one(scoped_filter(user, {"id": customer_id}), {"_id": 0})
     if not doc: raise HTTPException(404, "Customer not found")
     return doc
 
@@ -710,20 +780,24 @@ async def get_customer(customer_id: str, user: dict = Depends(get_current_user))
 async def update_customer(customer_id: str, body: CustomerUpdate, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in body.model_dump().items() if v is not None}
     if update:
-        res = await db.customers.update_one({"id": customer_id}, {"$set": update})
+        res = await db.customers.update_one(scoped_filter(user, {"id": customer_id}), {"$set": update})
         if res.matched_count == 0: raise HTTPException(404, "Customer not found")
-    return await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    return await db.customers.find_one(scoped_filter(user, {"id": customer_id}), {"_id": 0})
 
 @api_router.delete("/customers/{customer_id}")
-async def delete_customer(customer_id: str, user: dict = Depends(get_current_user)):
-    res = await db.customers.delete_one({"id": customer_id})
+async def delete_customer(customer_id: str, request: Request, user: dict = Depends(get_current_user)):
+    await require_step_up(request, user, "delete.customer")
+    res = await db.customers.delete_one(scoped_filter(user, {"id": customer_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Customer not found")
-    await db.transactions.delete_many({"customer_id": customer_id})
+    await db.transactions.delete_many(scoped_filter(user, {"customer_id": customer_id}))
+    await audit_log("delete.customer", user, {"customer_id": customer_id})
     return {"ok": True}
 
 @api_router.get("/customers/export/csv")
-async def export_customers_csv(user: dict = Depends(get_current_user)):
-    customers = await db.customers.find({}, {"_id": 0}).sort("name", 1).to_list(10000)
+async def export_customers_csv(request: Request, user: dict = Depends(get_current_user)):
+    await require_step_up(request, user, "export.customers_csv")
+    customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(10000)
+    await audit_log("export.customers_csv", user, meta={"count": len(customers)})
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["Name", "Phone", "Email", "Note", "Created At"])
@@ -753,11 +827,17 @@ async def list_transactions(customer_id: Optional[str] = None, type: Optional[st
     else:
         start = period_start(period or "")
         if start: q["date"] = {"$gte": start}
-    return await db.transactions.find(q, {"_id": 0}).sort("date", -1).to_list(limit)
+    safe_limit = max(1, min(limit, 1000))
+    return await db.transactions.find(scoped_filter(user, q), {"_id": 0}).sort("date", -1).to_list(safe_limit)
 
 @api_router.post("/customers/import-file")
 async def import_contacts_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    size = int(file.headers.get("content-length") or 0)
+    if size and size > MAX_IMPORT_BYTES:
+        raise HTTPException(413, f"File is too large. Upload a CSV/VCF under {MAX_IMPORT_BYTES // (1024 * 1024)} MB.")
     content = await file.read()
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, f"File is too large. Upload a CSV/VCF under {MAX_IMPORT_BYTES // (1024 * 1024)} MB.")
     text = content.decode("utf-8", errors="replace")
     filename = (file.filename or "").lower()
     contacts = []
@@ -790,7 +870,7 @@ async def import_contacts_file(file: UploadFile = File(...), user: dict = Depend
     else:
         raise HTTPException(400, "Unsupported file. Upload a .csv or .vcf file")
 
-    existing = await db.customers.find({}, {"_id": 0, "name": 1, "phone": 1}).to_list(5000)
+    existing = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1}).to_list(5000)
     keys = {(c.get("name","").lower().strip(), re.sub(r"[\s\-]","", c.get("phone") or "")) for c in existing}
     added = 0
     for item in contacts:
@@ -799,8 +879,8 @@ async def import_contacts_file(file: UploadFile = File(...), user: dict = Depend
         phone_clean = re.sub(r"[\s\-]", "", item.get("phone") or "")
         if (name.lower(), phone_clean) in keys: continue
         keys.add((name.lower(), phone_clean))
-        await db.customers.insert_one({"id": str(uuid.uuid4()), "name": name,
-            "phone": item.get("phone"), "note": None, "avatar_color": "#E5E7EB", "created_at": now_iso()})
+        await db.customers.insert_one(with_shop(user, {"id": str(uuid.uuid4()), "name": name,
+            "phone": item.get("phone"), "note": None, "avatar_color": "#E5E7EB", "created_at": now_iso()}))
         added += 1
     return {"added": added, "total": len(contacts), "skipped": len(contacts) - added}
 
@@ -810,7 +890,7 @@ async def create_transaction(body: TransactionCreate, user: dict = Depends(get_c
            "category": body.category or "Other", "note": body.note,
            "payment_method": body.payment_method or "Cash",
            "customer_id": body.customer_id, "date": body.date or now_iso(), "created_at": now_iso()}
-    await db.transactions.insert_one(doc)
+    await db.transactions.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
@@ -818,30 +898,35 @@ async def create_transaction(body: TransactionCreate, user: dict = Depends(get_c
 async def update_transaction(txn_id: str, body: TransactionUpdate, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if update:
-        res = await db.transactions.update_one({"id": txn_id}, {"$set": update})
+        res = await db.transactions.update_one(scoped_filter(user, {"id": txn_id}), {"$set": update})
         if res.matched_count == 0: raise HTTPException(404, "Transaction not found")
-    return await db.transactions.find_one({"id": txn_id}, {"_id": 0})
+    return await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
 
 @api_router.delete("/transactions/{txn_id}")
-async def delete_transaction(txn_id: str, user: dict = Depends(get_current_user)):
-    res = await db.transactions.delete_one({"id": txn_id})
+async def delete_transaction(txn_id: str, request: Request, user: dict = Depends(get_current_user)):
+    await require_step_up(request, user, "delete.transaction")
+    res = await db.transactions.delete_one(scoped_filter(user, {"id": txn_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Transaction not found")
+    await audit_log("delete.transaction", user, {"txn_id": txn_id})
     return {"ok": True}
 
 @api_router.get("/transactions/export/csv")
 async def export_transactions_csv(
+    request: Request,
     period: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
+    await require_step_up(request, user, "export.transactions_csv")
     q: dict = {}
     date_rng = _build_date_range(period, start_date, end_date)
     if date_rng:
         q["date"] = date_rng
-    txns = await db.transactions.find(q, {"_id": 0}).sort("date", -1).to_list(50000)
+    txns = await db.transactions.find(scoped_filter(user, q), {"_id": 0}).sort("date", -1).to_list(50000)
     customer_ids = list({t.get("customer_id") for t in txns if t.get("customer_id")})
-    customers = await db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
+    customers = await db.customers.find(scoped_filter(user, {"id": {"$in": customer_ids}}), {"_id": 0, "id": 1, "name": 1}).to_list(5000)
+    await audit_log("export.transactions_csv", user, meta={"count": len(txns)})
     cmap = {c["id"]: c["name"] for c in customers}
     out = io.StringIO()
     w = csv.writer(out)
@@ -856,10 +941,10 @@ async def export_transactions_csv(
 # ── Ledger: Categories ────────────────────────────────────────────────────────
 @api_router.get("/categories")
 async def list_categories(type: Optional[str] = None, user: dict = Depends(get_current_user)):
-    cats = await db.categories.find({}, {"_id": 0}).to_list(500)
+    cats = await db.categories.find(scoped_filter(user), {"_id": 0}).to_list(500)
     if not cats or any("type" not in c for c in cats):
-        await db.categories.delete_many({})
-        cats = [{"id": str(uuid.uuid4()), **c} for c in DEFAULT_CATEGORIES]
+        await db.categories.delete_many(scoped_filter(user))
+        cats = [with_shop(user, {"id": str(uuid.uuid4()), **c}) for c in DEFAULT_CATEGORIES]
         await db.categories.insert_many(cats)
         cats = [{k: v for k, v in c.items() if k != "_id"} for c in cats]
     if type in ("credit", "debit"):
@@ -870,45 +955,45 @@ async def list_categories(type: Optional[str] = None, user: dict = Depends(get_c
 async def create_category(body: CategoryCreate, user: dict = Depends(get_current_user)):
     doc = {"id": str(uuid.uuid4()), "name": body.name, "icon": body.icon,
            "color": body.color, "type": body.type}
-    await db.categories.insert_one(doc)
+    await db.categories.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
 @api_router.put("/categories/{cat_id}")
 async def update_category(cat_id: str, body: CategoryCreate, user: dict = Depends(get_current_user)):
     update = {k: v for k, v in {"name": body.name, "type": body.type, "icon": body.icon, "color": body.color}.items() if v is not None}
-    res = await db.categories.update_one({"id": cat_id}, {"$set": update})
+    res = await db.categories.update_one(scoped_filter(user, {"id": cat_id}), {"$set": update})
     if res.matched_count == 0: raise HTTPException(404, "Category not found")
-    return await db.categories.find_one({"id": cat_id}, {"_id": 0})
+    return await db.categories.find_one(scoped_filter(user, {"id": cat_id}), {"_id": 0})
 
 @api_router.delete("/categories/{cat_id}")
 async def delete_category(cat_id: str, user: dict = Depends(get_current_user)):
-    res = await db.categories.delete_one({"id": cat_id})
+    res = await db.categories.delete_one(scoped_filter(user, {"id": cat_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Category not found")
     return {"ok": True}
 
 # ── Ledger: Reminders ─────────────────────────────────────────────────────────
 @api_router.get("/reminders")
 async def list_reminders(user: dict = Depends(get_current_user)):
-    return await db.reminders.find({}, {"_id": 0}).sort("due_date", 1).to_list(500)
+    return await db.reminders.find(scoped_filter(user), {"_id": 0}).sort("due_date", 1).to_list(500)
 
 @api_router.post("/reminders")
 async def create_reminder(body: ReminderCreate, user: dict = Depends(get_current_user)):
     doc = {"id": str(uuid.uuid4()), "customer_id": body.customer_id, "title": body.title,
            "due_date": body.due_date, "amount": body.amount, "completed": False, "created_at": now_iso()}
-    await db.reminders.insert_one(doc)
+    await db.reminders.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
 @api_router.put("/reminders/{reminder_id}")
 async def toggle_reminder(reminder_id: str, completed: bool = True, user: dict = Depends(get_current_user)):
-    res = await db.reminders.update_one({"id": reminder_id}, {"$set": {"completed": completed}})
+    res = await db.reminders.update_one(scoped_filter(user, {"id": reminder_id}), {"$set": {"completed": completed}})
     if res.matched_count == 0: raise HTTPException(404, "Reminder not found")
     return {"ok": True}
 
 @api_router.delete("/reminders/{reminder_id}")
 async def delete_reminder(reminder_id: str, user: dict = Depends(get_current_user)):
-    res = await db.reminders.delete_one({"id": reminder_id})
+    res = await db.reminders.delete_one(scoped_filter(user, {"id": reminder_id}))
     if res.deleted_count == 0: raise HTTPException(404, "Reminder not found")
     return {"ok": True}
 
@@ -928,7 +1013,7 @@ async def reports_summary(period: str = "monthly", user: dict = Depends(get_curr
     else:
         days = 30
         start = now - timedelta(days=30)
-    txns = await db.transactions.find({"date": {"$gte": start.isoformat()}}, {"_id": 0}).to_list(5000)
+    txns = await db.transactions.find(scoped_filter(user, {"date": {"$gte": start.isoformat()}}), {"_id": 0}).to_list(5000)
     series = []
     for i in range(days):
         day_start = start + timedelta(days=i)
@@ -951,10 +1036,11 @@ async def reports_summary(period: str = "monthly", user: dict = Depends(get_curr
 @api_router.get("/ledger/dashboard")
 async def ledger_dashboard(user: dict = Depends(get_current_user)):
     agg = await db.transactions.aggregate([
+        {"$match": scoped_filter(user)},
         {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]).to_list(10)
     totals = {row["_id"]: row["total"] for row in agg}
-    recent = await db.transactions.find({}, {"_id": 0}).sort("date", -1).to_list(8)
-    customer_count = await db.customers.count_documents({})
+    recent = await db.transactions.find(scoped_filter(user), {"_id": 0}).sort("date", -1).to_list(8)
+    customer_count = await db.customers.count_documents(scoped_filter(user))
     return {"total_credit": round(totals.get("credit", 0), 2),
             "total_debit": round(totals.get("debit", 0), 2),
             "net_balance": round(totals.get("credit", 0) - totals.get("debit", 0), 2),
@@ -1089,51 +1175,51 @@ class IssueCategoryCreate(BaseModel):
 
 @api_router.get("/catalog/brands")
 async def get_brands(user: dict = Depends(get_current_user)):
-    return await db.brands.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    return await db.brands.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(1000)
 
 @api_router.post("/catalog/brands")
 async def add_brand(body: BrandCreate, user: dict = Depends(get_current_user)):
-    if await db.brands.find_one({"name": body.name}):
+    if await db.brands.find_one(scoped_filter(user, {"name": body.name})):
         raise HTTPException(400, "Brand already exists")
     doc = {"brand_id": str(uuid.uuid4()), "name": body.name.strip(), "models": ["Other"]}
-    await db.brands.insert_one(doc)
+    await db.brands.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
 @api_router.delete("/catalog/brands/{brand_id}")
 async def delete_brand(brand_id: str, user: dict = Depends(get_current_user)):
-    r = await db.brands.delete_one({"brand_id": brand_id})
+    r = await db.brands.delete_one(scoped_filter(user, {"brand_id": brand_id}))
     if r.deleted_count == 0: raise HTTPException(404, "Brand not found")
     return {"ok": True}
 
 @api_router.post("/catalog/brands/{brand_id}/models")
 async def add_model_to_brand(brand_id: str, body: ModelAdd, user: dict = Depends(get_current_user)):
-    r = await db.brands.update_one({"brand_id": brand_id}, {"$addToSet": {"models": body.model_name.strip()}})
+    r = await db.brands.update_one(scoped_filter(user, {"brand_id": brand_id}), {"$addToSet": {"models": body.model_name.strip()}})
     if r.matched_count == 0: raise HTTPException(404, "Brand not found")
     return {"ok": True}
 
 @api_router.delete("/catalog/brands/{brand_id}/models/{model_name:path}")
 async def delete_model_from_brand(brand_id: str, model_name: str, user: dict = Depends(get_current_user)):
-    r = await db.brands.update_one({"brand_id": brand_id}, {"$pull": {"models": model_name}})
+    r = await db.brands.update_one(scoped_filter(user, {"brand_id": brand_id}), {"$pull": {"models": model_name}})
     if r.matched_count == 0: raise HTTPException(404, "Brand not found")
     return {"ok": True}
 
 @api_router.get("/catalog/issue-categories")
 async def get_issue_categories(user: dict = Depends(get_current_user)):
-    return await db.issue_categories.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    return await db.issue_categories.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(1000)
 
 @api_router.post("/catalog/issue-categories")
 async def add_issue_category(body: IssueCategoryCreate, user: dict = Depends(get_current_user)):
-    if await db.issue_categories.find_one({"name": body.name}):
+    if await db.issue_categories.find_one(scoped_filter(user, {"name": body.name})):
         raise HTTPException(400, "Category already exists")
     doc = {"category_id": str(uuid.uuid4()), "name": body.name.strip()}
-    await db.issue_categories.insert_one(doc)
+    await db.issue_categories.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
 @api_router.delete("/catalog/issue-categories/{category_id}")
 async def delete_issue_category(category_id: str, user: dict = Depends(get_current_user)):
-    r = await db.issue_categories.delete_one({"category_id": category_id})
+    r = await db.issue_categories.delete_one(scoped_filter(user, {"category_id": category_id}))
     if r.deleted_count == 0: raise HTTPException(404, "Category not found")
     return {"ok": True}
 
@@ -1142,14 +1228,14 @@ class BankCreate(BaseModel):
 
 @api_router.get("/catalog/banks")
 async def get_banks(user: dict = Depends(get_current_user)):
-    return await db.banks.find({}, {"_id": 0}).to_list(100)
+    return await db.banks.find(scoped_filter(user), {"_id": 0}).to_list(100)
 
 @api_router.post("/catalog/banks")
 async def add_bank(body: BankCreate, user: dict = Depends(get_current_user)):
-    if await db.banks.find_one({"name": body.name}):
+    if await db.banks.find_one(scoped_filter(user, {"name": body.name})):
         raise HTTPException(400, "Bank already exists")
     doc = {"bank_id": str(uuid.uuid4()), "name": body.name.strip()}
-    await db.banks.insert_one(doc)
+    await db.banks.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
 
@@ -1157,13 +1243,13 @@ async def add_bank(body: BankCreate, user: dict = Depends(get_current_user)):
 async def update_bank(bank_id: str, body: dict, user: dict = Depends(get_current_user)):
     name = (body.get("name") or "").strip()
     if not name: raise HTTPException(400, "Name is required")
-    r = await db.banks.update_one({"bank_id": bank_id}, {"$set": {"name": name}})
+    r = await db.banks.update_one(scoped_filter(user, {"bank_id": bank_id}), {"$set": {"name": name}})
     if r.matched_count == 0: raise HTTPException(404, "Bank not found")
-    return await db.banks.find_one({"bank_id": bank_id}, {"_id": 0})
+    return await db.banks.find_one(scoped_filter(user, {"bank_id": bank_id}), {"_id": 0})
 
 @api_router.delete("/catalog/banks/{bank_id}")
 async def delete_bank(bank_id: str, user: dict = Depends(get_current_user)):
-    r = await db.banks.delete_one({"bank_id": bank_id})
+    r = await db.banks.delete_one(scoped_filter(user, {"bank_id": bank_id}))
     if r.deleted_count == 0: raise HTTPException(404, "Bank not found")
     return {"ok": True}
 
@@ -1175,18 +1261,31 @@ async def root():
 # ── Startup ──────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def on_startup():
+    await db.app_config.update_many(
+        {"shop_id": {"$exists": False}},
+        {"$set": {"shop_id": DEFAULT_SHOP_ID}},
+    )
     await db.users.create_index("user_id", unique=True)
     await db.users.create_index("email", sparse=True)
+    for collection in (
+        db.users, db.devices, db.movements, db.customers, db.transactions,
+        db.categories, db.reminders, db.brands, db.issue_categories, db.banks,
+    ):
+        await collection.update_many(
+            {"shop_id": {"$exists": False}},
+            {"$set": {"shop_id": DEFAULT_SHOP_ID}},
+        )
     await db.devices.create_index("device_id", unique=True)
     # sparse=True so devices without serial numbers don't conflict
     try:
         await db.devices.drop_index("serial_number_1")
     except Exception:
         pass
-    await db.devices.create_index("serial_number", unique=True, sparse=True)
+    await db.devices.create_index([("shop_id", 1), ("serial_number", 1)], unique=True, sparse=True)
     await db.movements.create_index("device_id")
     await db.transactions.create_index("customer_id")
     await db.transactions.create_index("date")
+    await db.audit_logs.create_index([("shop_id", 1), ("created_at", -1)])
     # Migrate: copy credentials from app_config into the user document (old deployments)
     cfg = await db.app_config.find_one({"_id": APP_CONFIG_ID})
     if cfg and cfg.get("pin_hash"):
@@ -1197,6 +1296,7 @@ async def on_startup():
                 {"user_id": SHOP_USER_ID},
                 {"$set": {
                     "email": cfg.get("email", ""),
+                    "shop_id": cfg.get("shop_id") or DEFAULT_SHOP_ID,
                     "email_hash": cfg.get("email_hash"),
                     "pin_hash": cfg.get("pin_hash"),
                     "failed_login_attempts": 0,
@@ -1206,18 +1306,18 @@ async def on_startup():
             )
 
     # Seed catalog if empty
-    if await db.brands.count_documents({}) == 0:
+    if await db.brands.count_documents({"shop_id": DEFAULT_SHOP_ID}) == 0:
         await db.brands.insert_many([
-            {"brand_id": str(uuid.uuid4()), "name": b["name"], "models": b["models"]}
+            {"brand_id": str(uuid.uuid4()), "shop_id": DEFAULT_SHOP_ID, "name": b["name"], "models": b["models"]}
             for b in DEFAULT_BRANDS
         ])
-    if await db.issue_categories.count_documents({}) == 0:
+    if await db.issue_categories.count_documents({"shop_id": DEFAULT_SHOP_ID}) == 0:
         await db.issue_categories.insert_many([
-            {"category_id": str(uuid.uuid4()), "name": n} for n in DEFAULT_ISSUE_CATEGORIES
+            {"category_id": str(uuid.uuid4()), "shop_id": DEFAULT_SHOP_ID, "name": n} for n in DEFAULT_ISSUE_CATEGORIES
         ])
-    if await db.banks.count_documents({}) == 0:
+    if await db.banks.count_documents({"shop_id": DEFAULT_SHOP_ID}) == 0:
         await db.banks.insert_many([
-            {"bank_id": str(uuid.uuid4()), "name": n} for n in DEFAULT_BANKS
+            {"bank_id": str(uuid.uuid4()), "shop_id": DEFAULT_SHOP_ID, "name": n} for n in DEFAULT_BANKS
         ])
 
 @app.on_event("shutdown")
