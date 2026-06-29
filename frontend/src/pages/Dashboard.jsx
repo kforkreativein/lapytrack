@@ -46,7 +46,7 @@ export default function Dashboard() {
     queryKey: ["ledger-dashboard"],
     queryFn: async () => (await api.get("/ledger/dashboard")).data,
   });
-  const loading = statsLoading || ledgerLoading;
+  const loading = statsLoading || ledgerLoading || !stats;
 
   const handleExport = async () => {
     const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/devices/export/csv`, {

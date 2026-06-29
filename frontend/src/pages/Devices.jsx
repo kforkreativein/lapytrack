@@ -37,7 +37,7 @@ export default function Devices() {
   const doExport = async () => {
     const params = exportPeriod !== "all" ? `?period=${exportPeriod}` : "";
     try {
-      const ok = await downloadCsv(`/devices/export/csv${params}`, "devices.csv", "export devices");
+      const ok = await downloadCsv(`/devices/export/csv${params}`, "devices.csv");
       if (ok) setExportOpen(false);
     } catch (err) {
       window.alert(err.message || "Export failed");

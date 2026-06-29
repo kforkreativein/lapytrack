@@ -397,9 +397,9 @@ export default function Ledger() {
     const params = exportPeriod !== "all" ? `?period=${exportPeriod}` : "";
     try {
       if (exportTarget === "contacts") {
-        await downloadCsv("/customers/export/csv", "contacts.csv", "export contacts");
+        await downloadCsv("/customers/export/csv", "contacts.csv");
       } else {
-        await downloadCsv(`/transactions/export/csv${params}`, "ledger.csv", "export ledger");
+        await downloadCsv(`/transactions/export/csv${params}`, "ledger.csv");
       }
       setExportTarget(null);
     } catch (err) {
