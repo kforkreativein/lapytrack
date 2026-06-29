@@ -1412,6 +1412,11 @@ async def shutdown_db_client():
 
 app.include_router(api_router)
 
+@app.get("/health", include_in_schema=False)
+async def health():
+    """Plain 200 OK — used by UptimeRobot to keep Render warm. No auth, no redirect."""
+    return {"ok": True}
+
 # ponytail: explicit origins required for credentials; '*' breaks withCredentials
 def _build_cors_origins():
     explicit = os.environ.get('CORS_ORIGINS', '').strip()
