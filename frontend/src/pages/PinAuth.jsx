@@ -75,9 +75,9 @@ export default function PinAuth() {
   const handleSetupStep1 = (e) => {
     e?.preventDefault();
     if (!shopName.trim()) { setError("Shop name is required"); return; }
-    if (email && !email.includes("@")) { setError("Enter a valid email"); return; }
-    if (email && password && password.length < 6) { setError("Password must be at least 6 characters"); return; }
-    if (email && password && password !== confirmPassword) { setError("Passwords do not match"); return; }
+    if (!email.trim() || !email.includes("@")) { setError("Enter a valid email address"); return; }
+    if (!password || password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match"); return; }
     setError(""); setStep(2);
   };
 
@@ -99,7 +99,7 @@ export default function PinAuth() {
     }
     setSubmitting(true);
     try {
-      await setupPin(shopName, finalPin, email || undefined, password || undefined);
+      await setupPin(shopName, finalPin, email.trim(), password);
       toast.success(`Welcome, ${shopName}`);
       navigate("/dashboard");
     } catch (err) {
@@ -190,10 +190,15 @@ export default function PinAuth() {
                 </div>
               )}
 
-              {setupStatus?.has_email && (
+              {setupStatus?.has_email ? (
                 <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
                   className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
-                  Forgot PIN? Sign in with email instead
+                  Sign in with email & password instead
+                </button>
+              ) : (
+                <button onClick={() => { setMode("email-login"); setError(""); setPin(""); }}
+                  className="block text-center w-full text-xs text-zinc-400 hover:text-zinc-700 mt-2 transition-colors">
+                  Sign in with email & password
                 </button>
               )}
             </>
@@ -251,7 +256,7 @@ export default function PinAuth() {
                 {step === 3 && "Confirm PIN"}
               </h2>
               <p className="text-sm text-zinc-500 mb-6">
-                {step === 1 && "Your shop name and login credentials."}
+                {step === 1 && "Your shop name, email, and password for full sign-in."}
                 {step === 2 && "Pick a 4-digit PIN for quick daily access."}
                 {step === 3 && "Enter the PIN again to confirm."}
               </p>
@@ -270,40 +275,32 @@ export default function PinAuth() {
                     <Input value={shopName} onChange={e => setShopName(e.target.value)} autoFocus
                       placeholder="e.g. Krish Computer" className="mt-1.5 rounded-sm border-zinc-300 h-11" />
                   </div>
-                  <div className="pt-1 border-t border-zinc-100">
-                    <p className="text-xs text-zinc-400 mb-3">
-                      Optional — add email + password so you can sign in from any device if your PIN is forgotten.
-                    </p>
-                    <div className="space-y-3">
-                      <div>
-                        <Label className="kpi-label">Email <span className="text-zinc-400 font-normal">(optional)</span></Label>
-                        <Input value={email} onChange={e => setEmail(e.target.value)}
-                          type="email" placeholder="you@example.com" className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
-                      </div>
-                      {email && (
-                        <>
-                          <div>
-                            <Label className="kpi-label">Password <span className="text-zinc-400 font-normal">(min 6 chars)</span></Label>
-                            <div className="relative mt-1.5">
-                              <Input value={password} onChange={e => setPassword(e.target.value)}
-                                type={showPw ? "text" : "password"} placeholder="••••••••"
-                                className="rounded-sm border-zinc-300 h-10 text-sm pr-10" />
-                              <button type="button" onClick={() => setShowPw(v => !v)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
-                                {showPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-                          <div>
-                            <Label className="kpi-label">Confirm password</Label>
-                            <Input value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-                              type="password" placeholder="••••••••"
-                              className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
-                          </div>
-                        </>
-                      )}
+                  <div>
+                    <Label className="kpi-label">Email *</Label>
+                    <Input value={email} onChange={e => setEmail(e.target.value)}
+                      type="email" placeholder="you@example.com" className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
+                  </div>
+                  <div>
+                    <Label className="kpi-label">Password * <span className="text-zinc-400 font-normal">(min 6 chars)</span></Label>
+                    <div className="relative mt-1.5">
+                      <Input value={password} onChange={e => setPassword(e.target.value)}
+                        type={showPw ? "text" : "password"} placeholder="••••••••"
+                        className="rounded-sm border-zinc-300 h-10 text-sm pr-10" />
+                      <button type="button" onClick={() => setShowPw(v => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400">
+                        {showPw ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
                     </div>
                   </div>
+                  <div>
+                    <Label className="kpi-label">Confirm password *</Label>
+                    <Input value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                      type="password" placeholder="••••••••"
+                      className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    Use email + password to sign in from any device. Your PIN is for quick daily unlock.
+                  </p>
                   {error && (
                     <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-sm">{error}</div>
                   )}

@@ -29,7 +29,7 @@ if not MONGO_URL:
 DB_NAME = os.environ.get('DB_NAME', 'krish_computer_db')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'krish-computer-secret-change-me')
 JWT_ALGORITHM = "HS256"
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+FRONTEND_URL = (os.environ.get('FRONTEND_URL') or 'https://lapy-track.vercel.app').rstrip('/')
 UPLOADS_DIR = ROOT_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
@@ -112,6 +112,16 @@ def generate_qr_svg(job_id: str) -> str:
     img.save(buf)
     return buf.getvalue().decode('utf-8')
 
+def enrich_device(doc: dict | None) -> dict | None:
+    """Return device with a fresh QR code using the current FRONTEND_URL."""
+    if not doc:
+        return doc
+    out = dict(doc)
+    device_id = out.get("device_id")
+    if device_id:
+        out["qr_code"] = generate_qr_svg(device_id)
+    return out
+
 # ── Auth Models ──────────────────────────────────────────────────────────────
 class PinSetupIn(BaseModel):
     shop_name: str
@@ -150,6 +160,10 @@ async def setup_pin(payload: PinSetupIn, response: Response):
         raise HTTPException(400, "PIN must be exactly 4 digits")
     if not payload.shop_name.strip():
         raise HTTPException(400, "Shop name is required")
+    if not payload.email or "@" not in payload.email:
+        raise HTTPException(400, "A valid email is required")
+    if not payload.password or len(payload.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
     if await get_app_config():
         raise HTTPException(400, "App already set up")
     t = now_iso()
@@ -157,11 +171,10 @@ async def setup_pin(payload: PinSetupIn, response: Response):
         "_id": APP_CONFIG_ID,
         "shop_name": payload.shop_name.strip(),
         "pin_hash": hash_password(payload.pin),
+        "email": payload.email.strip().lower(),
+        "email_hash": hash_password(payload.password),
         "created_at": t,
     }
-    if payload.email and payload.password:
-        doc["email"] = payload.email.strip().lower()
-        doc["email_hash"] = hash_password(payload.password)
     await db.app_config.insert_one(doc)
     user = {"user_id": SHOP_USER_ID, "name": payload.shop_name.strip(), "role": "admin", "created_at": t}
     await db.users.update_one({"user_id": SHOP_USER_ID}, {"$set": user}, upsert=True)
@@ -327,7 +340,7 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "created_at": t,
     })
     doc.pop("_id", None)
-    return doc
+    return enrich_device(doc)
 
 @api_router.get("/devices")
 async def list_devices(status: Optional[str] = None, category: Optional[str] = None,
@@ -344,7 +357,8 @@ async def list_devices(status: Optional[str] = None, category: Optional[str] = N
             {"customer_phone": {"$regex": q, "$options": "i"}},
             {"job_number": {"$regex": q, "$options": "i"}},
         ]
-    return await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    devices = await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return [enrich_device(d) for d in devices]
 
 @api_router.get("/devices/export/csv")
 async def export_csv(user: dict = Depends(get_current_user)):
@@ -368,14 +382,14 @@ async def export_csv(user: dict = Depends(get_current_user)):
 async def get_device(device_id: str, user: dict = Depends(get_current_user)):
     doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
-    return doc
+    return enrich_device(doc)
 
 @api_router.get("/public/job/{device_id}")
 async def get_job_public(device_id: str):
     """Public route — no auth required. Used by QR code scans."""
     doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
-    return doc
+    return enrich_device(doc)
 
 @api_router.patch("/devices/{device_id}")
 async def update_device(device_id: str, payload: DeviceUpdate, user: dict = Depends(get_current_user)):
@@ -384,7 +398,8 @@ async def update_device(device_id: str, payload: DeviceUpdate, user: dict = Depe
     data["updated_at"] = now_iso()
     result = await db.devices.update_one({"device_id": device_id}, {"$set": data})
     if result.matched_count == 0: raise HTTPException(404, "Device not found")
-    return await db.devices.find_one({"device_id": device_id}, {"_id": 0})
+    doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
+    return enrich_device(doc)
 
 @api_router.delete("/devices/{device_id}")
 async def delete_device(device_id: str, user: dict = Depends(get_current_user)):
@@ -428,7 +443,8 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
         update.update({"inward_date": t, "picked_up_by_name": "", "picked_up_by_phone": "",
                        "pickup_relationship": "", "expected_return_date": None})
     await db.devices.update_one({"device_id": payload.device_id}, {"$set": update})
-    return await db.devices.find_one({"device_id": payload.device_id}, {"_id": 0})
+    doc = await db.devices.find_one({"device_id": payload.device_id}, {"_id": 0})
+    return enrich_device(doc)
 
 @api_router.get("/movements")
 async def list_movements(device_id: Optional[str] = None, user: dict = Depends(get_current_user)):
@@ -480,6 +496,19 @@ async def serve_file(path: str, request: Request, auth: Optional[str] = Query(No
         except Exception: raise HTTPException(401, "Invalid token")
     else:
         await get_current_user(request)
+    return await _read_stored_file(path)
+
+@api_router.get("/public/files/{path:path}")
+async def serve_file_public(path: str):
+    """Serve a photo linked to a device job sheet (no login required)."""
+    if not path.startswith("uploads/"):
+        raise HTTPException(404, "File not found")
+    device = await db.devices.find_one({"photos": path}, {"_id": 1})
+    if not device:
+        raise HTTPException(404, "File not found")
+    return await _read_stored_file(path)
+
+async def _read_stored_file(path: str):
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     if not record: raise HTTPException(404, "File not found")
     filename = path.split("/")[-1]

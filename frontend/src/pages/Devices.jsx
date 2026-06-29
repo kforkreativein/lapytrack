@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,32 +17,30 @@ function formatShortDate(iso) {
 }
 
 export default function Devices() {
-  const [devices, setDevices] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
-  const [monthlyStats, setMonthlyStats] = useState({ monthly_inward: 0, monthly_outward: 0 });
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const params = {};
-    if (q) params.q = q;
-    if (status !== "all") params.status = status;
-    if (category !== "all") params.category = category;
-    const [deviceRes, statsRes] = await Promise.all([
-      api.get("/devices", { params }),
-      api.get("/stats"),
-    ]);
-    setDevices(deviceRes.data);
-    setMonthlyStats({
-      monthly_inward: statsRes.data.monthly_inward || 0,
-      monthly_outward: statsRes.data.monthly_outward || 0,
-    });
-    setLoading(false);
-  }, [category, q, status]);
-
-  useEffect(() => { load(); }, [load]);
+  const { data: devices = [], isLoading: devicesLoading } = useQuery({
+    queryKey: ["devices", q, status, category],
+    queryFn: async () => {
+      const params = {};
+      if (q) params.q = q;
+      if (status !== "all") params.status = status;
+      if (category !== "all") params.category = category;
+      return (await api.get("/devices", { params })).data;
+    },
+    placeholderData: (prev) => prev,
+  });
+  const { data: stats } = useQuery({
+    queryKey: ["stats"],
+    queryFn: async () => (await api.get("/stats")).data,
+  });
+  const monthlyStats = {
+    monthly_inward: stats?.monthly_inward || 0,
+    monthly_outward: stats?.monthly_outward || 0,
+  };
+  const loading = devicesLoading && devices.length === 0;
 
   return (
     <div className="mobile-page" data-testid="devices-page">

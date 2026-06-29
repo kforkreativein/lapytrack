@@ -3,6 +3,11 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+export function publicFileUrl(path) {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  return `${API}/public/files/${encoded}`;
+}
+
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,

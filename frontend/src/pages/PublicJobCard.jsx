@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, publicFileUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Loader2, Printer, Calendar, Tag, Info, Phone, Mail, Monitor } from "lucide-react";
 
@@ -178,7 +178,7 @@ export default function PublicJobCard() {
                 <div className="kpi-label mb-2">Photos</div>
                 <div className="grid grid-cols-2 gap-2">
                   {device.photos.map((p, i) => (
-                    <img key={i} src={`${api.defaults.baseURL.replace('/api', '')}/api/files/${p}`}
+                    <img key={i} src={publicFileUrl(p)}
                       alt={`Device ${i+1}`} className="w-full aspect-square object-cover border border-zinc-200 rounded-sm" />
                   ))}
                 </div>

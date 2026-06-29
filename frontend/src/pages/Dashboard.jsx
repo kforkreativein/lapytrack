@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,24 +38,15 @@ function formatDate(iso) {
 function fmt(n) { return `₹${Number(n || 0).toLocaleString("en-IN")}`; }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState(null);
-  const [ledger, setLedger] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [{ data: s }, { data: l }] = await Promise.all([
-          api.get("/stats"),
-          api.get("/ledger/dashboard"),
-        ]);
-        setStats(s);
-        setLedger(l);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["stats"],
+    queryFn: async () => (await api.get("/stats")).data,
+  });
+  const { data: ledger, isLoading: ledgerLoading } = useQuery({
+    queryKey: ["ledger-dashboard"],
+    queryFn: async () => (await api.get("/ledger/dashboard")).data,
+  });
+  const loading = statsLoading || ledgerLoading;
 
   const handleExport = async () => {
     const token = localStorage.getItem("access_token");
