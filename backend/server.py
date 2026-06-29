@@ -9,7 +9,6 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os, uuid, logging, io, csv, hashlib, re
-from bson import Binary
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
@@ -28,16 +27,41 @@ MONGO_URL = os.environ.get('MONGO_URL') or os.environ.get('MONGODB_URI')
 if not MONGO_URL:
     raise RuntimeError("Set MONGO_URL or MONGODB_URI to your MongoDB Atlas connection string.")
 DB_NAME = os.environ.get('DB_NAME', 'krish_computer_db')
-JWT_SECRET = os.environ.get('JWT_SECRET', 'krish-computer-secret-change-me')
+_INSECURE_JWT_DEFAULT = 'krish-computer-secret-change-me'
+_IS_PROD = os.environ.get('RENDER') == 'true' or os.environ.get('ENV', '').lower() in ('production', 'prod')
+MIN_PASSWORD_LEN = 10
+
+def _load_jwt_secret() -> str:
+    secret = (os.environ.get('JWT_SECRET') or '').strip()
+    if not secret or secret == _INSECURE_JWT_DEFAULT:
+        if os.environ.get('ALLOW_INSECURE_JWT') == '1':
+            return secret or _INSECURE_JWT_DEFAULT
+        raise RuntimeError(
+            "Set JWT_SECRET to a random string of at least 32 characters. "
+            "Local dev only: set ALLOW_INSECURE_JWT=1 in backend/.env."
+        )
+    if len(secret) < 32:
+        raise RuntimeError("JWT_SECRET must be at least 32 characters.")
+    return secret
+
+JWT_SECRET = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 FRONTEND_URL = (os.environ.get('FRONTEND_URL') or 'https://lapy-track.vercel.app').rstrip('/')
-UPLOADS_DIR = ROOT_DIR / "uploads"
-UPLOADS_DIR.mkdir(exist_ok=True)
+
+# Rate-limit: lock account after this many consecutive failures
+MAX_LOGIN_ATTEMPTS = 5
+MAX_PIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="Krish Computer Store API")
+app = FastAPI(
+    title="Krish Computer Store API",
+    docs_url=None if _IS_PROD else "/docs",
+    redoc_url=None if _IS_PROD else "/redoc",
+    openapi_url=None if _IS_PROD else "/openapi.json",
+)
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -61,10 +85,25 @@ def create_token(user_id: str, name: str) -> str:
                "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "access"}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
+def _cookie_flags() -> dict:
+    """Cross-origin SPA (Vercel) + API (Render) needs SameSite=None + Secure."""
+    local = FRONTEND_URL.startswith("http://localhost") or FRONTEND_URL.startswith("http://127.")
+    if local:
+        return {"secure": False, "samesite": "lax"}
+    return {"secure": True, "samesite": "none"}
+
 def set_auth_cookie(response: Response, token: str):
-    use_secure = FRONTEND_URL.startswith("https://")
-    response.set_cookie("access_token", token, httponly=True, secure=use_secure,
-                        samesite="lax", max_age=7*24*3600, path="/")
+    response.set_cookie(
+        "access_token", token, httponly=True, path="/", max_age=7 * 24 * 3600,
+        **_cookie_flags(),
+    )
+
+def clear_auth_cookie(response: Response):
+    response.delete_cookie("access_token", path="/", **_cookie_flags())
+
+def _validate_password(password: str, field: str = "Password") -> None:
+    if not password or len(password) < MIN_PASSWORD_LEN:
+        raise HTTPException(400, f"{field} must be at least {MIN_PASSWORD_LEN} characters")
 
 async def get_app_config():
     return await db.app_config.find_one({"_id": APP_CONFIG_ID})
@@ -88,6 +127,51 @@ async def get_current_user(request: Request) -> dict:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+def _safe_user(user: dict) -> dict:
+    """Strip sensitive fields before returning user to API caller."""
+    return {k: v for k, v in user.items()
+            if k not in ("pin_hash", "email_hash", "locked_until",
+                         "failed_login_attempts", "failed_pin_attempts")}
+
+def _is_locked(user: dict) -> bool:
+    lu = user.get("locked_until")
+    return bool(lu and lu > now_iso())
+
+async def _record_fail(user_id: str, field: str, max_attempts: int):
+    result = await db.users.find_one({"user_id": user_id}, {field: 1})
+    n = ((result or {}).get(field) or 0) + 1
+    upd: dict = {"$set": {field: n}}
+    if n >= max_attempts:
+        lockout = (datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+        upd["$set"]["locked_until"] = lockout  # type: ignore[index]
+    await db.users.update_one({"user_id": user_id}, upd)
+
+async def _clear_fail(user_id: str):
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"failed_login_attempts": 0, "failed_pin_attempts": 0, "locked_until": None}}
+    )
+
+def _build_date_range(period: Optional[str], start_date: Optional[str], end_date: Optional[str]) -> Optional[dict]:
+    """Return a MongoDB date-range filter dict, or None for no filter."""
+    if start_date or end_date:
+        rng: dict = {}
+        if start_date: rng["$gte"] = start_date
+        if end_date:   rng["$lt"]  = end_date
+        return rng
+    now = datetime.now(timezone.utc)
+    if period == "daily":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "weekly":
+        start = now - timedelta(days=7)
+    elif period == "monthly":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif period in ("annual", "yearly"):
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        return None
+    return {"$gte": start.isoformat()}
 
 def period_start(period: str) -> Optional[str]:
     now = datetime.now(timezone.utc)
@@ -114,13 +198,16 @@ def generate_qr_svg(job_id: str) -> str:
     return buf.getvalue().decode('utf-8')
 
 def enrich_device(doc: dict | None) -> dict | None:
-    """Return device with a fresh QR code using the current FRONTEND_URL."""
+    """Return device with a fresh QR code (only while device is active, not after outward)."""
     if not doc:
         return doc
     out = dict(doc)
     device_id = out.get("device_id")
-    if device_id:
+    # Clear QR once device is issued (outward) — restores automatically on next inward
+    if device_id and out.get("status") != "issued":
         out["qr_code"] = generate_qr_svg(device_id)
+    else:
+        out["qr_code"] = None
     return out
 
 # ── Auth Models ──────────────────────────────────────────────────────────────
@@ -145,14 +232,21 @@ class EmailPasswordUpdateIn(BaseModel):
     email: str
     password: str
 
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str
+
 # ── Auth Routes ──────────────────────────────────────────────────────────────
 @api_router.get("/auth/setup-status")
 async def setup_status():
     cfg = await get_app_config()
+    if not cfg:
+        return {"needs_setup": True, "shop_name": None, "has_email": False}
+    user = await db.users.find_one({"email_hash": {"$exists": True, "$ne": None}}, {"_id": 0, "email": 1})
     return {
-        "needs_setup": cfg is None,
-        "shop_name": cfg.get("shop_name") if cfg else None,
-        "has_email": bool(cfg.get("email_hash")) if cfg else False,
+        "needs_setup": False,
+        "shop_name": cfg.get("shop_name"),
+        "has_email": user is not None,
     }
 
 @api_router.post("/auth/setup")
@@ -163,43 +257,42 @@ async def setup_pin(payload: PinSetupIn, response: Response):
         raise HTTPException(400, "Shop name is required")
     if not payload.email or "@" not in payload.email:
         raise HTTPException(400, "A valid email is required")
-    if not payload.password or len(payload.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    _validate_password(payload.password)
     if await get_app_config():
         raise HTTPException(400, "App already set up")
     t = now_iso()
-    doc = {
-        "_id": APP_CONFIG_ID,
-        "shop_name": payload.shop_name.strip(),
-        "pin_hash": hash_password(payload.pin),
+    user_id = str(uuid.uuid4())
+    await db.app_config.insert_one({"_id": APP_CONFIG_ID, "shop_name": payload.shop_name.strip(), "created_at": t})
+    user = {
+        "user_id": user_id, "name": payload.shop_name.strip(), "role": "admin",
         "email": payload.email.strip().lower(),
         "email_hash": hash_password(payload.password),
+        "pin_hash": hash_password(payload.pin),
+        "failed_login_attempts": 0, "failed_pin_attempts": 0, "locked_until": None,
         "created_at": t,
     }
-    await db.app_config.insert_one(doc)
-    user = {"user_id": SHOP_USER_ID, "name": payload.shop_name.strip(), "role": "admin", "created_at": t}
-    await db.users.update_one({"user_id": SHOP_USER_ID}, {"$set": user}, upsert=True)
-    token = create_token(SHOP_USER_ID, payload.shop_name.strip())
+    await db.users.update_one({"user_id": user_id}, {"$set": user}, upsert=True)
+    token = create_token(user_id, payload.shop_name.strip())
     set_auth_cookie(response, token)
-    return {"user": user, "access_token": token}
+    return {"user": _safe_user(user)}
 
 @api_router.post("/auth/login-email")
 async def login_email(payload: EmailLoginIn, response: Response):
-    """One-time full login with email + password → returns JWT. Used when cookie is missing."""
-    cfg = await get_app_config()
-    if not cfg: raise HTTPException(404, "App not set up yet")
-    if not cfg.get("email") or not cfg.get("email_hash"):
-        raise HTTPException(400, "Email login not configured for this account")
-    if cfg["email"] != payload.email.strip().lower():
+    """Full login with email + password → JWT. Used on first visit or when cookie expires."""
+    email = payload.email.strip().lower()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    # Generic message — don't reveal whether email exists
+    if not user or not user.get("email_hash"):
         raise HTTPException(401, "Incorrect email or password")
-    if not verify_password(payload.password, cfg["email_hash"]):
+    if _is_locked(user):
+        raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
+    if not verify_password(payload.password, user["email_hash"]):
+        await _record_fail(user["user_id"], "failed_login_attempts", MAX_LOGIN_ATTEMPTS)
         raise HTTPException(401, "Incorrect email or password")
-    user = await db.users.find_one({"user_id": SHOP_USER_ID}, {"_id": 0})
-    if not user:
-        user = {"user_id": SHOP_USER_ID, "name": cfg.get("shop_name", "Shop"), "role": "admin"}
-    token = create_token(SHOP_USER_ID, user.get("name", ""))
+    await _clear_fail(user["user_id"])
+    token = create_token(user["user_id"], user.get("name", ""))
     set_auth_cookie(response, token)
-    return {"user": user, "access_token": token}
+    return {"user": _safe_user(user)}
 
 @api_router.post("/auth/login")
 async def login_pin(payload: PinLoginIn, response: Response):
@@ -208,26 +301,51 @@ async def login_pin(payload: PinLoginIn, response: Response):
     cfg = await get_app_config()
     if not cfg:
         raise HTTPException(404, "App not set up yet")
-    if not verify_password(payload.pin, cfg["pin_hash"]):
-        raise HTTPException(401, "Incorrect PIN")
-    user = await db.users.find_one({"user_id": SHOP_USER_ID}, {"_id": 0})
+    user = await db.users.find_one({"pin_hash": {"$exists": True, "$ne": None}}, {"_id": 0})
     if not user:
-        user = {"user_id": SHOP_USER_ID, "name": cfg.get("shop_name", "Shop"), "role": "admin"}
-        await db.users.insert_one({**user, "created_at": now_iso()})
-    token = create_token(SHOP_USER_ID, user.get("name", ""))
+        raise HTTPException(404, "No user configured")
+    if _is_locked(user):
+        raise HTTPException(429, f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
+    if not verify_password(payload.pin, user.get("pin_hash", "")):
+        await _record_fail(user["user_id"], "failed_pin_attempts", MAX_PIN_ATTEMPTS)
+        raise HTTPException(401, "Incorrect PIN")
+    await _clear_fail(user["user_id"])
+    token = create_token(user["user_id"], user.get("name", ""))
     set_auth_cookie(response, token)
-    return {"user": user, "access_token": token}
+    return {"user": _safe_user(user)}
 
 @api_router.post("/auth/change-pin")
 async def change_pin(payload: PinChangeIn, user: dict = Depends(get_current_user)):
     if not payload.new_pin.isdigit() or len(payload.new_pin) != 4:
         raise HTTPException(400, "New PIN must be 4 digits")
-    cfg = await get_app_config()
-    if not cfg:
-        raise HTTPException(404, "App not set up")
-    if not verify_password(payload.current_pin, cfg["pin_hash"]):
+    pin_hash = user.get("pin_hash") or ""
+    if not pin_hash:
+        # Fallback for migrated user whose pin_hash is still in app_config
+        cfg = await get_app_config()
+        pin_hash = (cfg or {}).get("pin_hash", "")
+    if not verify_password(payload.current_pin, pin_hash):
         raise HTTPException(401, "Current PIN is incorrect")
-    await db.app_config.update_one({"_id": APP_CONFIG_ID}, {"$set": {"pin_hash": hash_password(payload.new_pin)}})
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"pin_hash": hash_password(payload.new_pin), "updated_at": now_iso()}}
+    )
+    return {"ok": True}
+
+@api_router.post("/auth/change-password")
+async def change_password(payload: PasswordChangeIn, user: dict = Depends(get_current_user)):
+    _validate_password(payload.new_password, "New password")
+    email_hash = user.get("email_hash") or ""
+    if not email_hash:
+        cfg = await get_app_config()
+        email_hash = (cfg or {}).get("email_hash", "")
+    if not email_hash:
+        raise HTTPException(400, "No password configured")
+    if not verify_password(payload.current_password, email_hash):
+        raise HTTPException(401, "Current password is incorrect")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email_hash": hash_password(payload.new_password), "updated_at": now_iso()}}
+    )
     return {"ok": True}
 
 @api_router.post("/auth/email-password")
@@ -235,13 +353,9 @@ async def set_email_password(payload: EmailPasswordUpdateIn, user: dict = Depend
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(400, "Enter a valid email")
-    if len(payload.password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
-    cfg = await get_app_config()
-    if not cfg:
-        raise HTTPException(404, "App not set up")
-    await db.app_config.update_one(
-        {"_id": APP_CONFIG_ID},
+    _validate_password(payload.password)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
         {"$set": {"email": email, "email_hash": hash_password(payload.password), "updated_at": now_iso()}}
     )
     return {"ok": True, "email": email}
@@ -250,15 +364,15 @@ async def set_email_password(payload: EmailPasswordUpdateIn, user: dict = Depend
 async def me(user: dict = Depends(get_current_user)):
     cfg = await get_app_config()
     return {
-        **user,
+        **_safe_user(user),
         "shop_name": cfg.get("shop_name") if cfg else user.get("name"),
-        "email": cfg.get("email") if cfg else None,
-        "has_email": bool(cfg.get("email_hash")) if cfg else False,
+        "email": user.get("email") or (cfg.get("email") if cfg else None),
+        "has_email": bool(user.get("email_hash")),
     }
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
+    clear_auth_cookie(response)
     return {"ok": True}
 
 # ── Device Models ─────────────────────────────────────────────────────────────
@@ -274,7 +388,6 @@ class DeviceIn(BaseModel):
     customer_email: Optional[str] = ""
     issue_categories: List[str] = []
     issue_description: Optional[str] = ""
-    photos: List[str] = []
 
 class DeviceUpdate(BaseModel):
     device_type: Optional[str] = None
@@ -287,7 +400,6 @@ class DeviceUpdate(BaseModel):
     customer_phone: Optional[str] = None
     customer_email: Optional[str] = None
     issue_description: Optional[str] = None
-    photos: Optional[List[str]] = None
     status: Optional[str] = None
 
 class MovementIn(BaseModel):
@@ -314,7 +426,6 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         raise HTTPException(400, "Serial number already exists")
     device_id = f"dev_{uuid.uuid4().hex[:12]}"
     job_number = await generate_job_number()
-    qr_svg = generate_qr_svg(device_id)
     t = now_iso()
     doc = {
         "device_id": device_id, "job_number": job_number,
@@ -325,8 +436,7 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "customer_email": payload.customer_email or "",
         "issue_categories": payload.issue_categories or [],
         "issue_description": payload.issue_description or "",
-        "photos": payload.photos or [],
-        "qr_code": qr_svg,
+        # ponytail: QR not stored — enrich_device regenerates it on every read, saving ~6KB/device
         "status": "in_stock" if payload.category == "stock" else "in_repair",
         "inward_date": t, "outward_date": None, "created_by": user["user_id"],
         "created_at": t, "updated_at": t,
@@ -350,20 +460,32 @@ async def list_devices(status: Optional[str] = None, category: Optional[str] = N
     if status: filt["status"] = status
     if category: filt["category"] = category
     if q:
-        filt["$or"] = [
-            {"serial_number": {"$regex": q, "$options": "i"}},
-            {"brand": {"$regex": q, "$options": "i"}},
-            {"model": {"$regex": q, "$options": "i"}},
-            {"customer_name": {"$regex": q, "$options": "i"}},
-            {"customer_phone": {"$regex": q, "$options": "i"}},
-            {"job_number": {"$regex": q, "$options": "i"}},
-        ]
+        q = q.strip()[:100]
+        if q:
+            safe_q = re.escape(q)
+            filt["$or"] = [
+                {"serial_number": {"$regex": safe_q, "$options": "i"}},
+                {"brand": {"$regex": safe_q, "$options": "i"}},
+                {"model": {"$regex": safe_q, "$options": "i"}},
+                {"customer_name": {"$regex": safe_q, "$options": "i"}},
+                {"customer_phone": {"$regex": safe_q, "$options": "i"}},
+                {"job_number": {"$regex": safe_q, "$options": "i"}},
+            ]
     devices = await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return [enrich_device(d) for d in devices]
 
 @api_router.get("/devices/export/csv")
-async def export_csv(user: dict = Depends(get_current_user)):
-    devices = await db.devices.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+async def export_csv(
+    period: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    filt: dict = {}
+    date_rng = _build_date_range(period, start_date, end_date)
+    if date_rng:
+        filt["inward_date"] = date_rng
+    devices = await db.devices.find(filt, {"_id": 0}).sort("created_at", -1).to_list(5000)
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["Job No.", "Serial No.", "Type", "Brand", "Model", "Condition", "Category",
@@ -471,55 +593,12 @@ async def stats(user: dict = Depends(get_current_user)):
             "monthly_inward": monthly_inward, "monthly_outward": monthly_outward,
             "recent_movements": recent}
 
-# ── Photo Upload ──────────────────────────────────────────────────────────────
+# ── Photo Upload (disabled) ───────────────────────────────────────────────────
+# Photo feature removed to preserve MongoDB Atlas free-tier storage (512 MB).
+# Re-enable with Cloudinary integration when storage is upgraded.
 @api_router.post("/upload")
 async def upload_photo(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(400, "Only images allowed")
-    ext = (file.filename.split(".")[-1] if file.filename and "." in file.filename else "bin").lower()
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    data = await file.read()
-    if len(data) > 8 * 1024 * 1024: raise HTTPException(400, "File too large (max 8MB)")
-    storage_path = f"uploads/{filename}"
-    # ponytail: store bytes in MongoDB so files survive Render restarts (ephemeral disk)
-    await db.files.insert_one({
-        "id": str(uuid.uuid4()), "storage_path": storage_path,
-        "original_filename": file.filename, "content_type": file.content_type,
-        "size": len(data), "owner": user["user_id"], "is_deleted": False,
-        "created_at": now_iso(), "data": Binary(data),
-    })
-    return {"path": storage_path}
-
-@api_router.get("/files/{path:path}")
-async def serve_file(path: str, request: Request, auth: Optional[str] = Query(None)):
-    if auth:
-        try: jwt.decode(auth, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        except Exception: raise HTTPException(401, "Invalid token")
-    else:
-        await get_current_user(request)
-    return await _read_stored_file(path)
-
-@api_router.get("/public/files/{path:path}")
-async def serve_file_public(path: str):
-    """Serve a photo linked to a device job sheet (no login required)."""
-    if not path.startswith("uploads/"):
-        raise HTTPException(404, "File not found")
-    device = await db.devices.find_one({"photos": path}, {"_id": 1})
-    if not device:
-        raise HTTPException(404, "File not found")
-    return await _read_stored_file(path)
-
-async def _read_stored_file(path: str):
-    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
-    if not record: raise HTTPException(404, "File not found")
-    content_type = record.get("content_type", "application/octet-stream")
-    if record.get("data"):
-        return FastAPIResponse(content=bytes(record["data"]), media_type=content_type)
-    # fallback: disk (old files uploaded before this change)
-    filename = path.split("/")[-1]
-    file_path = UPLOADS_DIR / filename
-    if not file_path.exists(): raise HTTPException(404, "File not found")
-    return FastAPIResponse(content=file_path.read_bytes(), media_type=content_type)
+    raise HTTPException(410, "Photo upload is currently disabled")
 
 # ── Ledger: Customers ─────────────────────────────────────────────────────────
 DEFAULT_CATEGORIES = [
@@ -750,8 +829,17 @@ async def delete_transaction(txn_id: str, user: dict = Depends(get_current_user)
     return {"ok": True}
 
 @api_router.get("/transactions/export/csv")
-async def export_transactions_csv(user: dict = Depends(get_current_user)):
-    txns = await db.transactions.find({}, {"_id": 0}).sort("date", -1).to_list(50000)
+async def export_transactions_csv(
+    period: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    q: dict = {}
+    date_rng = _build_date_range(period, start_date, end_date)
+    if date_rng:
+        q["date"] = date_rng
+    txns = await db.transactions.find(q, {"_id": 0}).sort("date", -1).to_list(50000)
     customer_ids = list({t.get("customer_id") for t in txns if t.get("customer_id")})
     customers = await db.customers.find({"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(5000)
     cmap = {c["id"]: c["name"] for c in customers}
@@ -1088,6 +1176,7 @@ async def root():
 @app.on_event("startup")
 async def on_startup():
     await db.users.create_index("user_id", unique=True)
+    await db.users.create_index("email", sparse=True)
     await db.devices.create_index("device_id", unique=True)
     # sparse=True so devices without serial numbers don't conflict
     try:
@@ -1098,6 +1187,24 @@ async def on_startup():
     await db.movements.create_index("device_id")
     await db.transactions.create_index("customer_id")
     await db.transactions.create_index("date")
+    # Migrate: copy credentials from app_config into the user document (old deployments)
+    cfg = await db.app_config.find_one({"_id": APP_CONFIG_ID})
+    if cfg and cfg.get("pin_hash"):
+        existing_user = await db.users.find_one({"user_id": SHOP_USER_ID}, {"_id": 0})
+        if existing_user and not existing_user.get("pin_hash"):
+            logger.info("Migrating credentials from app_config → user document")
+            await db.users.update_one(
+                {"user_id": SHOP_USER_ID},
+                {"$set": {
+                    "email": cfg.get("email", ""),
+                    "email_hash": cfg.get("email_hash"),
+                    "pin_hash": cfg.get("pin_hash"),
+                    "failed_login_attempts": 0,
+                    "failed_pin_attempts": 0,
+                    "locked_until": None,
+                }}
+            )
+
     # Seed catalog if empty
     if await db.brands.count_documents({}) == 0:
         await db.brands.insert_many([

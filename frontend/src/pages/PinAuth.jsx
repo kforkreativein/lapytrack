@@ -76,7 +76,7 @@ export default function PinAuth() {
     e?.preventDefault();
     if (!shopName.trim()) { setError("Shop name is required"); return; }
     if (!email.trim() || !email.includes("@")) { setError("Enter a valid email address"); return; }
-    if (!password || password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (!password || password.length < 10) { setError("Password must be at least 10 characters"); return; }
     if (password !== confirmPassword) { setError("Passwords do not match"); return; }
     setError(""); setStep(2);
   };
@@ -281,7 +281,7 @@ export default function PinAuth() {
                       type="email" placeholder="you@example.com" className="mt-1.5 rounded-sm border-zinc-300 h-10 text-sm" />
                   </div>
                   <div>
-                    <Label className="kpi-label">Password * <span className="text-zinc-400 font-normal">(min 6 chars)</span></Label>
+                    <Label className="kpi-label">Password * <span className="text-zinc-400 font-normal">(min 10 chars)</span></Label>
                     <div className="relative mt-1.5">
                       <Input value={password} onChange={e => setPassword(e.target.value)}
                         type={showPw ? "text" : "password"} placeholder="••••••••"

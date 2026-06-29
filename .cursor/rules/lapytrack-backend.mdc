@@ -31,7 +31,7 @@ CORS_ORIGINS (comma-separated; credentials require explicit origins)
 
 ## Auth endpoints
 - `GET /auth/setup-status` — `needs_setup`, `has_email`
-- `POST /auth/setup` — requires shop_name, email, password (6+ chars), pin
+- `POST /auth/setup` — requires shop_name, email, password (10+ chars), pin
 - `POST /auth/login` — PIN
 - `POST /auth/login-email` — email + password
 

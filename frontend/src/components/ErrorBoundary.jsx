@@ -20,7 +20,6 @@ export default class ErrorBoundary extends React.Component {
   handleReset = () => {
     this.setState({ hasError: false, error: null });
     if (typeof window !== "undefined") {
-      try { localStorage.removeItem("access_token"); } catch { /* ignore */ }
       window.location.href = "/";
     }
   };

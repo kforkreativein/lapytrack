@@ -21,8 +21,7 @@ import { api, API, publicFileUrl } from "@/lib/api";
 // Authenticated: api.get("/devices")
 // Public job photos: publicFileUrl("uploads/abc.png")
 ```
-- `withCredentials: true`, 15s timeout
-- Bearer token from `localStorage.access_token` (fallback to cookie)
+- `withCredentials: true`, 15s timeout — auth via HttpOnly cookie only (no localStorage token)
 
 ## React Query
 - Configured in `src/index.js`: `staleTime: 120_000`, use for dashboard/devices caching

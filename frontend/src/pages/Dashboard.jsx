@@ -49,9 +49,7 @@ export default function Dashboard() {
   const loading = statsLoading || ledgerLoading;
 
   const handleExport = async () => {
-    const token = localStorage.getItem("access_token");
     const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/devices/export/csv`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
       credentials: "include",
     });
     const blob = await res.blob();

@@ -85,7 +85,6 @@ export function AuthProvider({ children }) {
     const body = { shop_name: shopName, pin };
     if (email && password) { body.email = email; body.password = password; }
     const { data } = await api.post("/auth/setup", body);
-    if (data.access_token) localStorage.setItem("access_token", data.access_token);
     sessionStorage.setItem(ONBOARDING_FLAG, "1");
     setUser(data.user);
     setSetupStatus({ needs_setup: false, shop_name: shopName });
@@ -96,7 +95,6 @@ export function AuthProvider({ children }) {
 
   const loginEmail = async (email, password) => {
     const { data } = await api.post("/auth/login-email", { email, password });
-    if (data.access_token) localStorage.setItem("access_token", data.access_token);
     setUser(data.user);
     markUnlocked();
     startPinTimer();
@@ -105,7 +103,6 @@ export function AuthProvider({ children }) {
 
   const loginPin = async (pin) => {
     const { data } = await api.post("/auth/login", { pin });
-    if (data.access_token) localStorage.setItem("access_token", data.access_token);
     setUser(data.user);
     markUnlocked();
     startPinTimer();
@@ -114,14 +111,17 @@ export function AuthProvider({ children }) {
 
   // 15-min re-lock overlay: verify PIN and reset timer without full page redirect
   const unlockWithPin = async (pin) => {
-    const { data } = await api.post("/auth/login", { pin });
-    if (data.access_token) localStorage.setItem("access_token", data.access_token);
+    await api.post("/auth/login", { pin });
     markUnlocked();
     return true;
   };
 
   const changePin = async (currentPin, newPin) => {
     await api.post("/auth/change-pin", { current_pin: currentPin, new_pin: newPin });
+  };
+
+  const changePassword = async (currentPassword, newPassword) => {
+    await api.post("/auth/change-password", { current_password: currentPassword, new_password: newPassword });
   };
 
   const setEmailPassword = async (email, password) => {
@@ -133,7 +133,6 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch { /* ignore */ }
-    localStorage.removeItem("access_token");
     sessionStorage.removeItem(STORAGE_KEY);
     stopPinTimer();
     setUser(null);
@@ -143,7 +142,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, loading, setupStatus, pinLocked,
-      setupPin, loginPin, loginEmail, unlockWithPin, changePin, setEmailPassword, logout, lockNow,
+      setupPin, loginPin, loginEmail, unlockWithPin, changePin, changePassword, setEmailPassword, logout, lockNow,
       refreshSetupStatus, formatApiErrorDetail,
     }}>
       {children}
