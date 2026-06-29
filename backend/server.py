@@ -1086,9 +1086,25 @@ async def shutdown_db_client():
 app.include_router(api_router)
 
 # ponytail: explicit origins required for credentials; '*' breaks withCredentials
-_raw_origins = os.environ.get('CORS_ORIGINS', '').strip()
-cors_origins = [o.strip() for o in _raw_origins.split(',') if o.strip()] if _raw_origins else None
+def _build_cors_origins():
+    explicit = os.environ.get('CORS_ORIGINS', '').strip()
+    if explicit:
+        return [o.strip().rstrip('/') for o in explicit.split(',') if o.strip()]
+    origins = []
+    for url in (
+        FRONTEND_URL,
+        'http://localhost:3000',
+        'https://lapy-track.vercel.app',
+        'https://frontend-kforkreativein-4819s-projects.vercel.app',
+    ):
+        if url:
+            clean = url.rstrip('/')
+            if clean not in origins:
+                origins.append(clean)
+    return origins
+
+cors_origins = _build_cors_origins()
 app.add_middleware(CORSMiddleware,
-    allow_origins=cors_origins or ["*"],
-    allow_credentials=bool(cors_origins),
+    allow_origins=cors_origins,
+    allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"])

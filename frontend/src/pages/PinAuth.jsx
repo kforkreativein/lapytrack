@@ -35,7 +35,7 @@ export default function PinAuth() {
   }, [setupStatus]);
 
   const friendlyError = (err) => {
-    if (!err.response) return "Cannot reach server — is the backend running on port 8001?";
+    if (!err.response) return "Cannot reach server — please wait a moment and try again.";
     return formatApiErrorDetail(err.response?.data?.detail) || err.message || "Something went wrong";
   };
 
@@ -144,7 +144,7 @@ export default function PinAuth() {
           {setupStatus?.offline && (
             <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2.5 rounded-sm mb-6">
               <WifiOff className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>Cannot reach backend — is the server running on port 8001?</span>
+              <span>Cannot reach server — the backend may be waking up. Wait 30 seconds and refresh.</span>
             </div>
           )}
 
