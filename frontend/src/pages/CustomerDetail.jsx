@@ -190,6 +190,7 @@ export default function CustomerDetail() {
         txnId={detailTxnId}
         customerName={customer?.name}
         banks={banks}
+        categories={categories}
         onClose={() => setDetailTxnId(null)}
         onUpdated={load}
         onDeleted={() => { setDetailTxnId(null); load(); }}

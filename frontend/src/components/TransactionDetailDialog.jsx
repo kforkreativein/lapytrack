@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
-  TrendingUp, TrendingDown, Landmark, Clock, Trash2, IndianRupee,
+  TrendingUp, TrendingDown, Landmark, Clock, Trash2, IndianRupee, Pencil,
 } from "lucide-react";
-import { txnRemaining } from "@/components/PaymentMethodPicker";
+import { txnRemaining, BankChipPicker } from "@/components/PaymentMethodPicker";
 import CreditPaymentActions from "@/components/CreditPaymentActions";
 
 function fmtAmount(n) { return Number(n).toLocaleString("en-IN"); }
@@ -25,6 +27,7 @@ export default function TransactionDetailDialog({
   txnId,
   customerName,
   banks = [],
+  categories = [],
   onClose,
   onUpdated,
   onDeleted,
@@ -32,10 +35,14 @@ export default function TransactionDetailDialog({
   const [txn, setTxn] = useState(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!txnId) { setTxn(null); return; }
+    if (!txnId) { setTxn(null); setEditing(false); return; }
     setLoading(true);
+    setEditing(false);
     api.get(`/transactions/${txnId}`)
       .then(({ data }) => setTxn(data))
       .catch(() => toast.error("Could not load transaction"))
@@ -47,6 +54,38 @@ export default function TransactionDetailDialog({
     api.get(`/transactions/${txnId}`)
       .then(({ data }) => { setTxn(data); onUpdated?.(); })
       .catch(() => {});
+  };
+
+  const startEdit = () => {
+    setForm({
+      amount: String(txn.amount),
+      type: txn.type,
+      category: txn.category || "Other",
+      payment_method: txn.payment_method || banks[0]?.name || "Cash",
+      note: txn.note || "",
+    });
+    setEditing(true);
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
+    setSaving(true);
+    try {
+      await api.put(`/transactions/${txnId}`, {
+        amount: amt,
+        type: form.type,
+        category: form.category,
+        payment_method: form.payment_method,
+        note: form.note || null,
+      });
+      toast.success("Transaction updated");
+      setEditing(false);
+      refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to update");
+    } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
@@ -65,19 +104,81 @@ export default function TransactionDetailDialog({
   const remaining = txn ? txnRemaining(txn) : 0;
   const payments = txn?.payments || [];
   const isCredit = txn?.type === "credit";
+  const typeCategories = categories.filter(c => c.type === form?.type || c.type === "both");
 
   return (
     <Dialog open={!!txnId} onOpenChange={open => !open && onClose()}>
       <DialogContent className="rounded-sm max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="font-heading text-lg pr-6">Transaction Details</DialogTitle>
+          <DialogTitle className="font-heading text-lg pr-6">
+            {editing ? "Edit Transaction" : "Transaction Details"}
+          </DialogTitle>
         </DialogHeader>
 
         {loading && <div className="py-8 text-center text-sm text-zinc-500">Loading…</div>}
 
-        {!loading && txn && (
+        {/* ── Edit mode ── */}
+        {!loading && txn && editing && (
+          <form onSubmit={handleSaveEdit} className="space-y-4 -mt-1">
+            <div>
+              <Label className="kpi-label mb-1.5 block">Type</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setForm(f => ({ ...f, type: "credit" }))}
+                  className={`flex items-center justify-center gap-2 h-10 rounded-sm border text-sm font-semibold transition-colors ${form.type === "credit" ? "bg-green-700 text-white border-green-700" : "border-zinc-300 text-zinc-600"}`}>
+                  <TrendingUp className="w-4 h-4" /> You Got
+                </button>
+                <button type="button" onClick={() => setForm(f => ({ ...f, type: "debit" }))}
+                  className={`flex items-center justify-center gap-2 h-10 rounded-sm border text-sm font-semibold transition-colors ${form.type === "debit" ? "bg-red-600 text-white border-red-600" : "border-zinc-300 text-zinc-600"}`}>
+                  <TrendingDown className="w-4 h-4" /> You Gave
+                </button>
+              </div>
+            </div>
+            <div>
+              <Label className="kpi-label mb-1.5 block">Amount (₹)</Label>
+              <div className="relative">
+                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                <Input value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                  inputMode="decimal" placeholder="0"
+                  className="pl-9 rounded-sm border-zinc-300 h-12 text-xl font-bold tabular-nums" />
+              </div>
+            </div>
+            {categories.length > 0 && (
+              <div>
+                <Label className="kpi-label mb-1.5 block">Category</Label>
+                <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                  className="w-full border border-zinc-300 rounded-sm px-3 h-10 text-sm bg-white">
+                  {typeCategories.map(c => <option key={c.id || c.name} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+            {banks.length > 0 && (
+              <BankChipPicker
+                banks={banks}
+                selected={form.payment_method}
+                onSelect={name => setForm(f => ({ ...f, payment_method: name }))}
+              />
+            )}
+            <div>
+              <Label className="kpi-label mb-1.5 block">Note</Label>
+              <Input value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
+                placeholder="Optional note" className="rounded-sm border-zinc-300" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={() => setEditing(false)}
+                className="rounded-sm h-11 border-zinc-300 flex-1">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={saving}
+                className={`flex-1 rounded-sm h-11 text-white ${form.type === "credit" ? "bg-green-700 hover:bg-green-800" : "bg-red-600 hover:bg-red-700"}`}>
+                {saving ? "Saving…" : "Save Changes"}
+              </Button>
+            </div>
+          </form>
+        )}
+
+        {/* ── Read-only detail ── */}
+        {!loading && txn && !editing && (
           <div className="space-y-4 -mt-1">
-            {/* Header */}
             <div className="flex items-start gap-3">
               <div className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-sm ${
                 isCredit ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
@@ -85,7 +186,7 @@ export default function TransactionDetailDialog({
                 {isCredit ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-semibold text-base truncate">{customerName || "—"}</div>
+                <div className="font-semibold text-base truncate">{customerName || "Personal / Other"}</div>
                 <div className="text-xs text-zinc-500 mt-0.5">{txn.category || "Other"} · {fmtDateTime(txn.date)}</div>
                 {txn.note && <div className="text-sm text-zinc-600 mt-1">{txn.note}</div>}
               </div>
@@ -94,7 +195,6 @@ export default function TransactionDetailDialog({
               </div>
             </div>
 
-            {/* Status */}
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="border border-zinc-200 rounded-sm p-2.5">
                 <div className="kpi-label text-[9px]">Type</div>
@@ -126,7 +226,6 @@ export default function TransactionDetailDialog({
               </div>
             )}
 
-            {/* Payment history */}
             {txn.on_credit && payments.length > 0 && (
               <div>
                 <div className="kpi-label mb-2">Payment History</div>
@@ -165,16 +264,16 @@ export default function TransactionDetailDialog({
               </div>
             )}
 
-            <Button
-              type="button"
-              variant="outline"
-              disabled={deleting}
-              onClick={handleDelete}
-              className="w-full rounded-sm h-10 border-red-300 text-red-700 hover:bg-red-50"
-            >
-              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-              {deleting ? "Deleting…" : "Delete Transaction"}
-            </Button>
+            <div className="flex gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={startEdit}
+                className="flex-1 rounded-sm h-10 border-zinc-300">
+                <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+              </Button>
+              <Button type="button" variant="outline" disabled={deleting} onClick={handleDelete}
+                className="rounded-sm h-10 border-red-300 text-red-700 hover:bg-red-50 px-3">
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </div>
         )}
       </DialogContent>

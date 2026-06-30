@@ -687,6 +687,7 @@ export default function Ledger() {
         txnId={detailTxn?.id}
         customerName={detailTxn?.customerName}
         banks={banks}
+        categories={categories}
         onClose={() => setDetailTxn(null)}
         onUpdated={() => { load(); setTransactionVersion(v => v + 1); }}
         onDeleted={() => { setDetailTxn(null); load(); setTransactionVersion(v => v + 1); }}

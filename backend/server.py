@@ -17,9 +17,10 @@ import qrcode
 import qrcode.image.svg
 import jwt
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Query
-from fastapi.responses import StreamingResponse, Response as FastAPIResponse
+from fastapi.responses import StreamingResponse, Response as FastAPIResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field
 
 # ── Config ──────────────────────────────────────────────────────────────────
@@ -575,7 +576,10 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "inward_date": t, "outward_date": None, "created_by": user["user_id"],
         "created_at": t, "updated_at": t,
     }
-    await db.devices.insert_one(with_shop(user, doc))
+    try:
+        await db.devices.insert_one(with_shop(user, doc))
+    except DuplicateKeyError:
+        raise HTTPException(400, "A device with this serial number already exists")
     await db.movements.insert_one(with_shop(user, {
         "movement_id": f"mov_{uuid.uuid4().hex[:12]}", "device_id": device_id,
         "job_number": job_number, "movement_type": "inward",
@@ -1613,12 +1617,24 @@ async def on_startup():
             {"$set": {"shop_id": DEFAULT_SHOP_ID}},
         )
     await db.devices.create_index("device_id", unique=True)
-    # sparse=True so devices without serial numbers don't conflict
+    # Unique serial per shop, but ONLY when a serial is actually provided.
+    # A sparse compound index still indexes docs with serial_number=null (because
+    # shop_id is present), so multiple blank-serial devices collided. A partial
+    # index keyed on serial_number being a string fixes that.
+    for stale in ("serial_number_1", "shop_id_1_serial_number_1"):
+        try:
+            await db.devices.drop_index(stale)
+        except Exception:
+            pass
     try:
-        await db.devices.drop_index("serial_number_1")
+        await db.devices.create_index(
+            [("shop_id", 1), ("serial_number", 1)],
+            unique=True,
+            partialFilterExpression={"serial_number": {"$type": "string"}},
+            name="shop_serial_unique",
+        )
     except Exception:
-        pass
-    await db.devices.create_index([("shop_id", 1), ("serial_number", 1)], unique=True, sparse=True)
+        logger.exception("Could not create partial serial_number index")
     await db.movements.create_index("device_id")
     await db.transactions.create_index("customer_id")
     await db.transactions.create_index("date")
@@ -1696,6 +1712,17 @@ def _build_cors_origins():
             if clean not in origins:
                 origins.append(clean)
     return origins
+
+# Catch unhandled errors INSIDE the CORS layer so the 500 response still carries
+# CORS headers — otherwise the browser reports a generic "network error" and the
+# real cause is hidden. Registered before CORS so CORS stays the outermost layer.
+@app.middleware("http")
+async def catch_unhandled_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error: %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Server error. Please try again."})
 
 cors_origins = _build_cors_origins()
 app.add_middleware(CORSMiddleware,

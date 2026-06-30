@@ -1,4 +1,4 @@
-import { Checkbox } from "@/components/ui/checkbox";
+import { Check } from "lucide-react";
 import { Label } from "@/components/ui/label";
 
 const chipBase =
@@ -73,10 +73,13 @@ export default function PaymentMethodPicker({
               className={chipClass(onCredit)}
               aria-pressed={onCredit}
             >
-              <Checkbox
-                checked={onCredit}
-                className="h-3.5 w-3.5 pointer-events-none border-zinc-400 data-[state=checked]:bg-white data-[state=checked]:text-zinc-950"
-              />
+              <span
+                className={`inline-flex items-center justify-center h-3.5 w-3.5 rounded-[3px] border ${
+                  onCredit ? "bg-white border-white text-zinc-950" : "border-zinc-400 text-transparent"
+                }`}
+              >
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
               Debit
             </button>
           )}
