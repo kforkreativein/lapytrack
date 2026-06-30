@@ -17,6 +17,8 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
   const [partialOpen, setPartialOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
   const [partialMethod, setPartialMethod] = useState("");
+  const [fullOpen, setFullOpen] = useState(false);
+  const [fullMethod, setFullMethod] = useState("");
   const [saving, setSaving] = useState(false);
 
   const remaining = txnRemaining(txn);
@@ -64,7 +66,15 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
 
   const handleFull = (e) => {
     e?.stopPropagation?.();
-    recordPayment(remaining, txn.payment_method, { withUndo: isExpense });
+    setFullMethod(banks[0]?.name || "");
+    setFullOpen(true);
+  };
+
+  const handleFullSubmit = async (e) => {
+    e.preventDefault();
+    await recordPayment(remaining, fullMethod || banks[0]?.name || "Cash", { withUndo: isExpense });
+    setFullOpen(false);
+    setFullMethod("");
   };
 
   const handlePartialSubmit = async (e) => {
@@ -107,6 +117,35 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
           {partialLabel}
         </Button>
       </div>
+
+      <Dialog open={fullOpen} onOpenChange={setFullOpen}>
+        <DialogContent
+          className="rounded-sm max-w-[calc(100vw-1rem)] sm:max-w-sm p-4 sm:p-6"
+          onClick={e => e.stopPropagation()}
+        >
+          <DialogHeader>
+            <DialogTitle className="font-heading text-base">
+              {isExpense ? "Full Payment" : "Full Receipt"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="rounded-sm border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm -mt-1">
+            <div className="text-zinc-500 text-xs">Amount to {isExpense ? "pay" : "receive"}</div>
+            <div className="font-bold text-lg tabular-nums mt-0.5">₹{fmtAmount(remaining)}</div>
+          </div>
+          <form onSubmit={handleFullSubmit} className="space-y-4">
+            {banks.length > 0 && (
+              <BankChipPicker
+                banks={banks}
+                selected={fullMethod || banks[0]?.name}
+                onSelect={setFullMethod}
+              />
+            )}
+            <Button type="submit" disabled={saving} className={`w-full rounded-sm h-11 text-white ${isExpense ? "bg-red-600 hover:bg-red-700" : "bg-green-700 hover:bg-green-800"}`}>
+              {saving ? "Saving…" : `Record ₹${fmtAmount(remaining)}`}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={partialOpen} onOpenChange={setPartialOpen}>
         <DialogContent

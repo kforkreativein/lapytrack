@@ -35,6 +35,21 @@ function StatusPill({ status }) {
   );
 }
 
+function RepairStatusPill({ status }) {
+  const map = {
+    not_started: { label: "Not Started",  cls: "bg-zinc-100 text-zinc-500 border-zinc-200" },
+    in_progress: { label: "In Progress",  cls: "bg-amber-50 text-amber-700 border-amber-300" },
+    completed:   { label: "Completed",    cls: "bg-blue-50 text-blue-700 border-blue-300" },
+    delivered:   { label: "Delivered",    cls: "bg-green-50 text-green-700 border-green-300" },
+  };
+  const { label, cls } = map[status] || { label: status, cls: "bg-zinc-50 text-zinc-500 border-zinc-200" };
+  return (
+    <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${cls}`}>
+      Repair: {label}
+    </span>
+  );
+}
+
 export default function PublicJobCard() {
   const { id } = useParams();
   const [device, setDevice] = useState(null);
@@ -131,6 +146,9 @@ export default function PublicJobCard() {
             {/* ── Status strip ────────────────────────────────────── */}
             <div className="px-6 py-4 border-b border-zinc-100 flex flex-wrap items-center gap-3">
               <StatusPill status={device.status} />
+              {device.repair_status && device.repair_status !== "not_started" && (
+                <RepairStatusPill status={device.repair_status} />
+              )}
               <div className="flex items-center gap-1.5 text-sm text-zinc-500">
                 <Calendar className="w-4 h-4 flex-shrink-0" />
                 Inward: {fmt(device.inward_date)}
@@ -217,7 +235,7 @@ export default function PublicJobCard() {
               <div className="px-6 py-6 bg-zinc-50 border-t border-zinc-100">
                 <div className="flex flex-col sm:flex-row items-center gap-5">
                   <div className="w-36 h-36 md:w-44 md:h-44 bg-white border border-zinc-200
-                                  rounded-xl p-2.5 shadow-sm flex-shrink-0"
+                                  rounded-xl p-2.5 shadow-sm flex-shrink-0 [&>svg]:w-full [&>svg]:h-full"
                     dangerouslySetInnerHTML={{ __html: device.qr_code }} />
                   <div className="text-center sm:text-left">
                     <div className="font-heading font-bold text-base text-zinc-950 mb-1">

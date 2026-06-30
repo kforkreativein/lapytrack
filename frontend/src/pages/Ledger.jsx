@@ -349,6 +349,7 @@ export default function Ledger() {
   const [ledgerTotals, setLedgerTotals] = useState({ total_credit: 0, total_debit: 0 });
   const [detailTxn, setDetailTxn] = useState(null); // { id, customerName }
   const [dayCash, setDayCash] = useState({ credit: 0, debit: 0 });
+  const [txnFilter, setTxnFilter] = useState("all"); // "all" | "credit" | "debit"
 
   const load = async () => {
     try {
@@ -512,6 +513,20 @@ export default function Ledger() {
             <div className="text-xs text-zinc-500 mt-1">
               {displayDate(selectedDate)} · Credit ₹{fmtAmount(dayCredit)} · Debit ₹{fmtAmount(dayDebit)}
             </div>
+            <div className="flex gap-1 mt-2">
+              {[["all","All"],["credit","Credit"],["debit","Debit"]].map(([v,l]) => (
+                <button key={v} type="button" onClick={() => setTxnFilter(v)}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-sm border transition-colors ${
+                    txnFilter === v
+                      ? v === "debit" ? "bg-red-600 text-white border-red-600"
+                        : v === "credit" ? "bg-green-700 text-white border-green-700"
+                        : "bg-zinc-950 text-white border-zinc-950"
+                      : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
+                  }`}>
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-2">
@@ -551,11 +566,15 @@ export default function Ledger() {
             )}
           </div>
         </div>
-        {transactions.length === 0 ? (
-          <div className="p-6 text-sm text-zinc-500 text-center">No transactions for this date</div>
-        ) : (
+        {(() => {
+          const visibleTxns = txnFilter === "all" ? transactions : transactions.filter(t => t.type === txnFilter);
+          return visibleTxns.length === 0 ? (
+            <div className="p-6 text-sm text-zinc-500 text-center">
+              {transactions.length === 0 ? "No transactions for this date" : `No ${txnFilter} transactions for this date`}
+            </div>
+          ) : (
           <ul className="divide-y divide-zinc-200">
-            {transactions.slice(0, 50).map(t => {
+            {visibleTxns.slice(0, 50).map(t => {
               const customer = customerById[t.customer_id];
               const remaining = txnRemaining(t);
               return (
@@ -623,7 +642,8 @@ export default function Ledger() {
               );
             })}
           </ul>
-        )}
+          );
+        })()}
       </div>
 
       {/* Customer list */}

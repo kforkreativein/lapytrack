@@ -161,7 +161,7 @@ export default function DeviceDetail() {
         </div>
         <div className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-[160px_1fr] gap-5">
           {device.qr_code
-            ? <div className="w-36 h-36 border border-zinc-200 p-2 bg-white mx-auto md:mx-0" dangerouslySetInnerHTML={{ __html: device.qr_code }} />
+            ? <div className="w-36 h-36 border border-zinc-200 p-2 bg-white mx-auto md:mx-0 [&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: device.qr_code }} />
             : <div className="w-36 h-36 border border-zinc-200 p-3 bg-zinc-50 mx-auto md:mx-0 flex items-center justify-center text-center">
                 <span className="text-xs text-zinc-400 leading-relaxed">QR available<br/>when device<br/>is in repair</span>
               </div>

@@ -54,7 +54,7 @@ MAX_LOGIN_ATTEMPTS = 5
 MAX_PIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 DEFAULT_SHOP_ID = os.environ.get("DEFAULT_SHOP_ID", "shop_default")
-MAX_IMPORT_BYTES = int(os.environ.get("MAX_IMPORT_BYTES", str(2 * 1024 * 1024)))
+MAX_IMPORT_BYTES = int(os.environ.get("MAX_IMPORT_BYTES", str(5 * 1024 * 1024)))
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
