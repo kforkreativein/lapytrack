@@ -22,7 +22,8 @@ export function publicFileUrl(path) {
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,
-  timeout: 45000,
+  // ponytail: 65s covers Render free-tier cold start (30-60s); 45s was too short
+  timeout: 65000,
 });
 
 // Attach stored token as Authorization header (fallback for mobile where cross-origin cookies are blocked)

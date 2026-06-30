@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, formatApiErrorDetail } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -72,7 +72,7 @@ export default function OutwardForm() {
       toast.success("Device handed over");
       navigate(`/devices/${deviceId}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed");
+      toast.error(err.response ? formatApiErrorDetail(err.response.data?.detail) : "Server unreachable — please try again");
     } finally {
       setSubmitting(false);
     }

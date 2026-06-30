@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "@/lib/api";
+import { api, formatApiErrorDetail } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,7 +50,8 @@ export default function InwardForm() {
 
   // Derived values
   const brand = brandIsOther ? brandCustom : (brands.find(b => b.brand_id === selectedBrandId)?.name || "");
-  const model = modelIsOther ? modelCustom : selectedModel;
+  // modelCustom is used when: brand is typed ("Other"), brand has no catalog models, or model is typed ("Other")
+  const model = (modelIsOther || brandIsOther || brandModels.length === 0) ? modelCustom : selectedModel;
 
   useEffect(() => {
     Promise.all([api.get("/catalog/brands"), api.get("/catalog/issue-categories")])
@@ -122,7 +123,7 @@ export default function InwardForm() {
         toast.success("Device received back");
         navigate(`/devices/${existingDeviceId}`);
       } catch (err) {
-        toast.error(err.response?.data?.detail || "Failed");
+        toast.error(err.response ? formatApiErrorDetail(err.response.data?.detail) : "Server unreachable — please try again");
       } finally {
         setSubmitting(false);
       }
@@ -153,7 +154,7 @@ export default function InwardForm() {
       toast.success(`Inward logged · ${data.job_number}`);
       navigate(`/devices/${data.device_id}`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed");
+      toast.error(err.response ? formatApiErrorDetail(err.response.data?.detail) : "Server unreachable — please try again");
     } finally {
       setSubmitting(false);
     }
@@ -313,7 +314,7 @@ export default function InwardForm() {
                         data-testid="model-input"
                         className="mt-1.5 rounded-sm border-zinc-300 h-10"
                         placeholder="e.g. MacBook Pro 14&quot; M3"
-                        value={brandIsOther ? modelCustom : ""}
+                        value={modelCustom}
                         onChange={e => setModelCustom(e.target.value)}
                       />
                     )}
