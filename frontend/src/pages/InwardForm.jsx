@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, formatApiErrorDetail } from "@/lib/api";
+import { api, formatApiErrorDetail, pingBackend, withRetry } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,17 +62,24 @@ export default function InwardForm() {
   const model = (modelIsOther || brandIsOther || brandModels.length === 0) ? modelCustom : selectedModel;
 
   useEffect(() => {
-    Promise.all([api.get("/catalog/brands"), api.get("/catalog/issue-categories")])
-      .then(([b, ic]) => {
+    let cancelled = false;
+    const loadCatalog = async () => {
+      pingBackend();
+      try {
+        const [b, ic] = await withRetry(() =>
+          Promise.all([api.get("/catalog/brands"), api.get("/catalog/issue-categories")])
+        );
+        if (cancelled) return;
         setBrands(b.data);
         setIssueCategories(ic.data);
         setServerReady(true);
-        // Load customers for picker in the background
         api.get("/customers").then(r => setCustomers(r.data)).catch(() => {});
-      })
-      .catch(() => {
-        // Backend still cold-starting; submit stays disabled until retry succeeds
-      });
+      } catch {
+        if (!cancelled) setTimeout(loadCatalog, 3000);
+      }
+    };
+    loadCatalog();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -153,7 +160,10 @@ export default function InwardForm() {
     if (existingDeviceId) {
       setSubmitting(true);
       try {
-        await api.post("/movements", { device_id: existingDeviceId, movement_type: "inward", remarks });
+        pingBackend();
+        await withRetry(() =>
+          api.post("/movements", { device_id: existingDeviceId, movement_type: "inward", remarks })
+        );
         toast.success("Device received back");
         navigate(`/devices/${existingDeviceId}`);
       } catch (err) {
@@ -175,16 +185,19 @@ export default function InwardForm() {
 
     setSubmitting(true);
     try {
-      const { data } = await api.post("/devices", {
-        device_type: deviceType, brand, model,
-        serial_number: serialNumber.trim() || null,
-        condition, category,
-        customer_name: customerName,
-        customer_phone: customerPhone,
-        customer_email: customerEmail,
-        issue_categories: selectedIssues,
-        issue_description: issueNotes,
-      });
+      pingBackend();
+      const { data } = await withRetry(() =>
+        api.post("/devices", {
+          device_type: deviceType, brand, model,
+          serial_number: serialNumber.trim() || null,
+          condition, category,
+          customer_name: customerName,
+          customer_phone: customerPhone,
+          customer_email: customerEmail,
+          issue_categories: selectedIssues,
+          issue_description: issueNotes,
+        })
+      );
       toast.success(`Inward logged · ${data.job_number}`);
       navigate(`/devices/${data.device_id}`);
     } catch (err) {

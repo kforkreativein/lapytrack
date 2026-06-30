@@ -6,12 +6,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowLeft, TrendingUp, TrendingDown, Trash2, Landmark } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Trash2, Landmark, Clock } from "lucide-react";
+import PaymentMethodPicker, { txnRemaining } from "@/components/PaymentMethodPicker";
+import CreditPaymentActions from "@/components/CreditPaymentActions";
 
 function fmt(iso) {
   if (!iso) return "";
   try { return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
   catch { return iso; }
+}
+
+function txnBalanceEffect(t) {
+  const amount = Number(t.amount || 0);
+  const paid = Number(t.amount_paid || 0);
+  if (t.on_credit) {
+    const remaining = Math.max(0, amount - paid);
+    return t.type === "credit" ? remaining : -remaining;
+  }
+  return t.type === "credit" ? amount : -amount;
 }
 
 export default function CustomerDetail() {
@@ -22,20 +34,22 @@ export default function CustomerDetail() {
   const [tab, setTab] = useState("all");
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(null); // "credit" | "debit" | null
-  const [form, setForm] = useState({ amount: "", note: "", category: "Other", payment_method: "" });
+  const [form, setForm] = useState({ amount: "", note: "", category: "Other", payment_method: "", on_credit: false });
   const [categories, setCategories] = useState([]);
   const [banks, setBanks] = useState([]);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [{ data: c }, { data: t }, { data: cats }, { data: b }] = await Promise.all([
+      const [{ data: c }, { data: t }, { data: cats }, { data: b }, { data: allCustomers }] = await Promise.all([
         api.get(`/customers/${id}`),
         api.get("/transactions", { params: { customer_id: id } }),
         api.get("/categories"),
         api.get("/catalog/banks"),
+        api.get("/customers"),
       ]);
-      setCustomer(c);
+      const match = allCustomers.find(x => x.id === id);
+      setCustomer({ ...c, balance: match?.balance });
       setTxns(t);
       setCategories(cats);
       setBanks(b);
@@ -45,7 +59,7 @@ export default function CustomerDetail() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = tab === "all" ? txns : txns.filter(t => t.type === tab);
-  const balance = txns.reduce((s, t) => t.type === "credit" ? s + t.amount : s - t.amount, 0);
+  const balance = customer?.balance ?? txns.reduce((s, t) => s + txnBalanceEffect(t), 0);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -56,12 +70,13 @@ export default function CustomerDetail() {
       await api.post("/transactions", {
         amount: amt, type: showAdd, note: form.note || null,
         category: form.category,
-        payment_method: form.payment_method || banks[0]?.name || "Cash",
+        payment_method: form.on_credit ? "On Credit" : (form.payment_method || banks[0]?.name || "Cash"),
         customer_id: id,
+        on_credit: form.on_credit,
       });
-      toast.success(showAdd === "credit" ? "Credit added" : "Debit added");
+      toast.success(form.on_credit ? "On-credit entry added" : (showAdd === "credit" ? "Credit added" : "Debit added"));
       setShowAdd(null);
-      setForm({ amount: "", note: "", category: "Other", payment_method: "" });
+      setForm({ amount: "", note: "", category: "Other", payment_method: "", on_credit: false });
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed");
@@ -125,42 +140,58 @@ export default function CustomerDetail() {
           <div className="p-10 text-center text-sm text-zinc-500">No transactions</div>
         ) : (
           <ul className="divide-y divide-zinc-200">
-            {filtered.map(t => (
-              <li key={t.id} className="flex items-start gap-3 px-4 py-3.5 group hover:bg-zinc-50">
-                <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-sm mt-0.5 ${
-                  t.type === "credit" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                  {t.type === "credit" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs text-zinc-500">{t.category}</span>
-                    {t.payment_method && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
-                        <Landmark className="w-2.5 h-2.5" />{t.payment_method}
-                      </span>
-                    )}
+            {filtered.map(t => {
+              const remaining = txnRemaining(t);
+              return (
+                <li key={t.id} className="flex items-start gap-3 px-4 py-3.5 group hover:bg-zinc-50">
+                  <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-sm mt-0.5 ${
+                    t.type === "credit" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                    {t.type === "credit" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                   </div>
-                  {t.note && <div className="text-sm text-zinc-800 truncate">{t.note}</div>}
-                  <div className="text-[11px] text-zinc-400 mt-0.5">{fmt(t.date)}</div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`font-mono text-sm font-bold ${t.type === "credit" ? "text-green-700" : "text-red-600"}`}>
-                    {t.type === "credit" ? "+" : "-"}₹{t.amount.toLocaleString("en-IN")}
-                  </span>
-                  <button onClick={() => handleDelete(t.id)}
-                    className="sm:opacity-0 sm:group-hover:opacity-100 transition-opacity p-2 hover:text-red-600 touch-target">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </li>
-            ))}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs text-zinc-500">{t.category}</span>
+                      {t.payment_method && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
+                          <Landmark className="w-2.5 h-2.5" />{t.payment_method}
+                        </span>
+                      )}
+                      {t.on_credit && remaining > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
+                          <Clock className="w-2.5 h-2.5" />₹{remaining.toLocaleString("en-IN")} due
+                        </span>
+                      )}
+                    </div>
+                    {t.note && <div className="text-sm text-zinc-800 truncate">{t.note}</div>}
+                    <div className="text-[11px] text-zinc-400 mt-0.5">{fmt(t.date)}</div>
+                    <div className="mt-1.5">
+                      <CreditPaymentActions
+                        txn={t}
+                        banks={banks}
+                        onUpdated={load}
+                        showUndo={t.type === "debit"}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`font-mono text-sm font-bold ${t.type === "credit" ? "text-green-700" : "text-red-600"}`}>
+                      {t.type === "credit" ? "+" : "-"}₹{t.amount.toLocaleString("en-IN")}
+                    </span>
+                    <button onClick={() => handleDelete(t.id)}
+                      className="sm:opacity-0 sm:group-hover:opacity-100 transition-opacity p-2 hover:text-red-600 touch-target">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
 
       {/* Add transaction dialog */}
       <Dialog open={!!showAdd} onOpenChange={() => setShowAdd(null)}>
-        <DialogContent className="rounded-sm max-w-[calc(100vw-1.5rem)] sm:max-w-sm">
+        <DialogContent className="rounded-sm max-w-[calc(100vw-1.5rem)] sm:max-w-sm max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-heading">
               {showAdd === "credit" ? "You Got (Credit)" : "You Gave (Debit)"}
@@ -180,20 +211,16 @@ export default function CustomerDetail() {
               </select>
             </div>
             {banks.length > 0 && (
-              <div>
-                <Label className="kpi-label">Payment Method</Label>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {banks.map(b => (
-                    <button key={b.bank_id} type="button"
-                      onClick={() => setForm(f => ({ ...f, payment_method: b.name }))}
-                      className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${
-                        (form.payment_method || banks[0]?.name) === b.name
-                          ? "bg-zinc-950 text-white border-zinc-950"
-                          : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"
-                      }`}>{b.name}</button>
-                  ))}
-                </div>
-              </div>
+              <PaymentMethodPicker
+                banks={banks}
+                selected={form.payment_method || banks[0]?.name}
+                onSelect={name => setForm(f => ({ ...f, payment_method: name }))}
+                onCredit={form.on_credit}
+                onCreditChange={v => setForm(f => ({ ...f, on_credit: v }))}
+                creditHint={showAdd === "credit"
+                  ? "Customer will pay later — not counted in today's income."
+                  : "You will pay later — not counted in today's expense."}
+              />
             )}
             <div>
               <Label className="kpi-label">Note</Label>

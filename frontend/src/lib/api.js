@@ -67,3 +67,19 @@ export function formatApiErrorDetail(detail) {
 export function pingBackend() {
   fetch(`${API}/`, { method: "GET" }).catch(() => {});
 }
+
+/** Retry a request on network errors (no response) — helps with Render cold starts */
+export async function withRetry(fn, { retries = 2, delayMs = 2000 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (err.response || attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, delayMs));
+      pingBackend();
+    }
+  }
+  throw lastErr;
+}

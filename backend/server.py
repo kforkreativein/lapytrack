@@ -720,7 +720,8 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
                "type": "credit", "category": "Repair Income",
                "note": f"Repair charge – {device.get('brand','')} {device.get('model','')} ({device.get('job_number','')})".strip(" –()"),
                "payment_method": payload.repair_payment_method or "Cash",
-               "customer_id": customer_id, "date": t, "created_at": t}
+               "customer_id": customer_id, "date": t, "created_at": t,
+               "on_credit": False, "amount_paid": 0.0, "payments": []}
         await db.transactions.insert_one(with_shop(user, txn))
 
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
@@ -796,6 +797,7 @@ class TransactionCreate(BaseModel):
     customer_id: Optional[str] = None
     date: Optional[str] = None
     payment_method: Optional[str] = "Cash"
+    on_credit: bool = False  # pay later — entry recorded but cash not counted until payment received
 
 class TransactionUpdate(BaseModel):
     amount: Optional[float] = None
@@ -804,6 +806,34 @@ class TransactionUpdate(BaseModel):
     note: Optional[str] = None
     date: Optional[str] = None
     payment_method: Optional[str] = None
+    on_credit: Optional[bool] = None
+
+class PaymentRecord(BaseModel):
+    amount: float
+    payment_method: Optional[str] = "Cash"
+    date: Optional[str] = None
+
+def txn_balance_contribution(txn: dict) -> float:
+    """Outstanding balance effect of a transaction."""
+    amount = float(txn.get("amount") or 0)
+    paid = float(txn.get("amount_paid") or 0)
+    if txn.get("on_credit"):
+        remaining = max(0, amount - paid)
+        return remaining if txn.get("type") == "credit" else -remaining
+    return amount if txn.get("type") == "credit" else -amount
+
+def txn_cash_on_day(txn: dict, day_start: str, day_end: str, for_type: str) -> float:
+    """Cash-flow amount counted on a given day for income/expense totals."""
+    if txn.get("type") != for_type:
+        return 0
+    if txn.get("on_credit"):
+        return sum(
+            float(p.get("amount") or 0)
+            for p in txn.get("payments") or []
+            if day_start <= (p.get("date") or "") < day_end
+        )
+    d = txn.get("date") or ""
+    return float(txn.get("amount") or 0) if day_start <= d < day_end else 0
 
 class CategoryCreate(BaseModel):
     name: str
@@ -820,16 +850,25 @@ class ReminderCreate(BaseModel):
 @api_router.get("/customers")
 async def list_customers(user: dict = Depends(get_current_user)):
     customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(2000)
+    txns = await db.transactions.find(scoped_filter(user), {"_id": 0}).to_list(50000)
+    by_customer: dict = {}
+    for t in txns:
+        cid = t.get("customer_id")
+        if not cid:
+            continue
+        by_customer.setdefault(cid, {"credit": 0.0, "debit": 0.0, "balance": 0.0})
+        contrib = txn_balance_contribution(t)
+        if contrib >= 0:
+            by_customer[cid]["credit"] += contrib
+        else:
+            by_customer[cid]["debit"] += abs(contrib)
+        by_customer[cid]["balance"] += contrib
     out = []
     for c in customers:
-        agg = await db.transactions.aggregate([
-            {"$match": scoped_filter(user, {"customer_id": c["id"]})},
-            {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}},
-        ]).to_list(10)
-        totals = {row["_id"]: row["total"] for row in agg}
-        c["balance"] = round(totals.get("credit", 0) - totals.get("debit", 0), 2)
-        c["total_credit"] = round(totals.get("credit", 0), 2)
-        c["total_debit"] = round(totals.get("debit", 0), 2)
+        totals = by_customer.get(c["id"], {"credit": 0.0, "debit": 0.0, "balance": 0.0})
+        c["balance"] = round(totals["balance"], 2)
+        c["total_credit"] = round(totals["credit"], 2)
+        c["total_debit"] = round(totals["debit"], 2)
         out.append(c)
     return out
 
@@ -975,7 +1014,8 @@ async def create_transaction(body: TransactionCreate, user: dict = Depends(get_c
     doc = {"id": str(uuid.uuid4()), "amount": body.amount, "type": body.type,
            "category": body.category or "Other", "note": body.note,
            "payment_method": body.payment_method or "Cash",
-           "customer_id": body.customer_id, "date": body.date or now_iso(), "created_at": now_iso()}
+           "customer_id": body.customer_id, "date": body.date or now_iso(), "created_at": now_iso(),
+           "on_credit": body.on_credit, "amount_paid": 0.0, "payments": []}
     await db.transactions.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
@@ -994,6 +1034,49 @@ async def delete_transaction(txn_id: str, user: dict = Depends(get_current_user)
     if res.deleted_count == 0: raise HTTPException(404, "Transaction not found")
     await audit_log("delete.transaction", user, {"txn_id": txn_id})
     return {"ok": True}
+
+@api_router.post("/transactions/{txn_id}/payments")
+async def record_payment(txn_id: str, body: PaymentRecord, user: dict = Depends(get_current_user)):
+    txn = await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
+    if not txn:
+        raise HTTPException(404, "Transaction not found")
+    if not txn.get("on_credit"):
+        raise HTTPException(400, "This transaction is not on credit")
+    amount = float(body.amount)
+    if amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    paid = float(txn.get("amount_paid") or 0)
+    remaining = float(txn.get("amount") or 0) - paid
+    if amount > remaining + 0.01:
+        raise HTTPException(400, f"Amount exceeds remaining balance (₹{remaining:.2f})")
+    payment = {
+        "id": str(uuid.uuid4()),
+        "amount": amount,
+        "payment_method": body.payment_method or "Cash",
+        "date": body.date or now_iso(),
+    }
+    new_paid = round(paid + amount, 2)
+    await db.transactions.update_one(
+        scoped_filter(user, {"id": txn_id}),
+        {"$push": {"payments": payment}, "$set": {"amount_paid": new_paid}},
+    )
+    return await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
+
+@api_router.delete("/transactions/{txn_id}/payments/last")
+async def undo_last_payment(txn_id: str, user: dict = Depends(get_current_user)):
+    txn = await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
+    if not txn:
+        raise HTTPException(404, "Transaction not found")
+    payments = txn.get("payments") or []
+    if not payments:
+        raise HTTPException(400, "No payments to undo")
+    last = payments[-1]
+    new_paid = round(float(txn.get("amount_paid") or 0) - float(last.get("amount") or 0), 2)
+    await db.transactions.update_one(
+        scoped_filter(user, {"id": txn_id}),
+        {"$pop": {"payments": 1}, "$set": {"amount_paid": max(0, new_paid)}},
+    )
+    return await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
 
 @api_router.get("/transactions/export/csv")
 async def export_transactions_csv(
@@ -1014,11 +1097,12 @@ async def export_transactions_csv(
     cmap = {c["id"]: c["name"] for c in customers}
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Date", "Type", "Amount", "Customer", "Category", "Payment Method", "Note"])
+    w.writerow(["Date", "Type", "Amount", "Customer", "Category", "Payment Method", "Note", "On Credit", "Amount Paid"])
     for t in txns:
         w.writerow([t.get("date",""), t.get("type",""), t.get("amount",""),
                     cmap.get(t.get("customer_id",""),""), t.get("category",""),
-                    t.get("payment_method",""), t.get("note","")])
+                    t.get("payment_method",""), t.get("note",""),
+                    "Yes" if t.get("on_credit") else "No", t.get("amount_paid", "")])
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="ledger.csv"'})
 
@@ -1115,16 +1199,28 @@ async def reports_summary(period: str = "monthly",
     for i in range(days):
         day_start = start + timedelta(days=i)
         day_end = day_start + timedelta(days=1)
-        credit = sum(t["amount"] for t in txns if t["type"] == "credit" and day_start.isoformat() <= t.get("date","") < day_end.isoformat())
-        debit = sum(t["amount"] for t in txns if t["type"] == "debit" and day_start.isoformat() <= t.get("date","") < day_end.isoformat())
+        ds, de = day_start.isoformat(), day_end.isoformat()
+        credit = sum(txn_cash_on_day(t, ds, de, "credit") for t in txns)
+        debit = sum(txn_cash_on_day(t, ds, de, "debit") for t in txns)
         series.append({"label": day_start.strftime("%d/%m"), "credit": round(credit, 2), "debit": round(debit, 2)})
     cat_map = {}
     for t in txns:
         c = t.get("category", "Other")
         if c not in cat_map: cat_map[c] = {"category": c, "credit": 0.0, "debit": 0.0}
-        cat_map[c][t["type"]] += t["amount"]
-    total_credit = sum(t["amount"] for t in txns if t["type"] == "credit")
-    total_debit = sum(t["amount"] for t in txns if t["type"] == "debit")
+        # Category totals: use full amounts for non-credit; paid amounts for on-credit
+        if t.get("on_credit"):
+            paid = float(t.get("amount_paid") or 0)
+            cat_map[c][t["type"]] += paid
+        else:
+            cat_map[c][t["type"]] += t["amount"]
+    total_credit = sum(
+        float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+        for t in txns if t["type"] == "credit"
+    )
+    total_debit = sum(
+        float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+        for t in txns if t["type"] == "debit"
+    )
     return {"period": period, "total_credit": round(total_credit, 2), "total_debit": round(total_debit, 2),
             "net": round(total_credit - total_debit, 2), "series": series,
             "by_category": list(cat_map.values())}
@@ -1132,16 +1228,32 @@ async def reports_summary(period: str = "monthly",
 # ── Combined Dashboard ────────────────────────────────────────────────────────
 @api_router.get("/ledger/dashboard")
 async def ledger_dashboard(user: dict = Depends(get_current_user)):
-    agg = await db.transactions.aggregate([
-        {"$match": scoped_filter(user)},
-        {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}]).to_list(10)
-    totals = {row["_id"]: row["total"] for row in agg}
+    txns = await db.transactions.find(scoped_filter(user), {"_id": 0}).to_list(50000)
+    total_credit = sum(
+        float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+        for t in txns if t.get("type") == "credit"
+    )
+    total_debit = sum(
+        float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+        for t in txns if t.get("type") == "debit"
+    )
     recent = await db.transactions.find(scoped_filter(user), {"_id": 0}).sort("date", -1).to_list(8)
     customer_count = await db.customers.count_documents(scoped_filter(user))
-    return {"total_credit": round(totals.get("credit", 0), 2),
-            "total_debit": round(totals.get("debit", 0), 2),
-            "net_balance": round(totals.get("credit", 0) - totals.get("debit", 0), 2),
+    return {"total_credit": round(total_credit, 2),
+            "total_debit": round(total_debit, 2),
+            "net_balance": round(total_credit - total_debit, 2),
             "customer_count": customer_count, "recent_transactions": recent}
+
+@api_router.get("/ledger/daily-cash")
+async def ledger_daily_cash(
+    start_date: str,
+    end_date: str,
+    user: dict = Depends(get_current_user),
+):
+    txns = await db.transactions.find(scoped_filter(user), {"_id": 0}).to_list(50000)
+    credit = sum(txn_cash_on_day(t, start_date, end_date, "credit") for t in txns)
+    debit = sum(txn_cash_on_day(t, start_date, end_date, "debit") for t in txns)
+    return {"credit": round(credit, 2), "debit": round(debit, 2)}
 
 # ── Catalog: Default Data ─────────────────────────────────────────────────────
 DEFAULT_BRANDS = [

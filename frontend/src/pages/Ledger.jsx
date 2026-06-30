@@ -11,8 +11,10 @@ import { toast } from "sonner";
 import {
   Plus, Search, TrendingUp, TrendingDown, Minus, Users, X,
   UserPlus, IndianRupee, ChevronRight, Download,
-  CalendarDays, Landmark, ArrowLeft, ArrowRight, Pencil, Trash2,
+  CalendarDays, Landmark, ArrowLeft, ArrowRight, Pencil, Trash2, Clock,
 } from "lucide-react";
+import PaymentMethodPicker, { txnRemaining } from "@/components/PaymentMethodPicker";
+import CreditPaymentActions from "@/components/CreditPaymentActions";
 
 function avatarBg(name) {
   const colors = ["#E5E7EB","#FEE2E2","#D1FAE5","#DBEAFE","#EDE9FE","#FEF3C7","#FCE7F3"];
@@ -205,7 +207,7 @@ function AddCustomerDialog({ open, onClose, onSaved, initialName = "" }) {
 
 // ── Add Entry dialog ──────────────────────────────────────────────────────────
 function AddEntryDialog({ open, onClose, customers, categories, banks, onSaved, preSelectedCustomer, onCreateNew }) {
-  const emptyForm = { type: "credit", amount: "", category: "", payment_method: "", note: "" };
+  const emptyForm = { type: "credit", amount: "", category: "", payment_method: "", note: "", on_credit: false };
   const [customer, setCustomer] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -231,13 +233,16 @@ function AddEntryDialog({ open, onClose, customers, categories, banks, onSaved, 
         amount: amt,
         type: form.type,
         category: form.category || defaultCat,
-        payment_method: form.payment_method || banks[0]?.name || "Cash",
+        payment_method: form.on_credit ? "On Credit" : (form.payment_method || banks[0]?.name || "Cash"),
         note: form.note || null,
         customer_id: customer.id,
+        on_credit: form.on_credit,
       });
-      toast.success(form.type === "credit"
-        ? `₹${fmtAmount(amt)} received from ${customer.name}`
-        : `₹${fmtAmount(amt)} paid to ${customer.name}`);
+      toast.success(form.on_credit
+        ? `₹${fmtAmount(amt)} on credit — ${customer.name}`
+        : form.type === "credit"
+          ? `₹${fmtAmount(amt)} received from ${customer.name}`
+          : `₹${fmtAmount(amt)} paid to ${customer.name}`);
       reset();
       onSaved();
       onClose();
@@ -296,20 +301,16 @@ function AddEntryDialog({ open, onClose, customers, categories, banks, onSaved, 
           </div>
 
           {banks.length > 0 && (
-            <div>
-              <Label className="kpi-label mb-1.5 block">Payment Method</Label>
-              <div className="flex flex-wrap gap-2">
-                {banks.map(b => (
-                  <button key={b.bank_id} type="button"
-                    onClick={() => setForm(f => ({ ...f, payment_method: b.name }))}
-                    className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${
-                      (form.payment_method || banks[0]?.name) === b.name
-                        ? "bg-zinc-950 text-white border-zinc-950"
-                        : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"
-                    }`}>{b.name}</button>
-                ))}
-              </div>
-            </div>
+            <PaymentMethodPicker
+              banks={banks}
+              selected={form.payment_method || banks[0]?.name}
+              onSelect={name => setForm(f => ({ ...f, payment_method: name }))}
+              onCredit={form.on_credit}
+              onCreditChange={v => setForm(f => ({ ...f, on_credit: v }))}
+              creditHint={form.type === "credit"
+                ? "Customer will pay later — income not counted today until you record payment."
+                : "You will pay later — expense not counted today until you record payment."}
+            />
           )}
 
           <div>
@@ -454,6 +455,7 @@ export default function Ledger() {
   const [preSelectedCustomer, setPreSelectedCustomer] = useState(null);
   const [ledgerTotals, setLedgerTotals] = useState({ total_credit: 0, total_debit: 0 });
   const [editTxn, setEditTxn] = useState(null); // transaction being edited
+  const [dayCash, setDayCash] = useState({ credit: 0, debit: 0 });
 
   const load = async () => {
     try {
@@ -474,9 +476,15 @@ export default function Ledger() {
 
   const refreshTransactions = useCallback(() => {
     const bounds = dateBounds(selectedDate);
-    api.get("/transactions", { params: { start_date: bounds.start, end_date: bounds.end, limit: 500 } })
-      .then(({ data }) => setTransactions(data))
-      .catch(() => setTransactions([]));
+    Promise.all([
+      api.get("/transactions", { params: { start_date: bounds.start, end_date: bounds.end, limit: 500 } }),
+      api.get("/ledger/daily-cash", { params: { start_date: bounds.start, end_date: bounds.end } }),
+    ])
+      .then(([{ data: txns }, { data: cash }]) => {
+        setTransactions(txns);
+        setDayCash(cash);
+      })
+      .catch(() => { setTransactions([]); setDayCash({ credit: 0, debit: 0 }); });
   }, [selectedDate]);
 
   useEffect(() => { refreshTransactions(); }, [refreshTransactions, transactionVersion]);
@@ -527,8 +535,8 @@ export default function Ledger() {
   const totalGet = customers.reduce((s, c) => s + Math.max(0, c.balance || 0), 0);
   const totalGive = customers.reduce((s, c) => s + Math.max(0, -(c.balance || 0)), 0);
   const customerById = Object.fromEntries(customers.map(c => [c.id, c]));
-  const dayCredit = transactions.filter(t => t.type === "credit").reduce((sum, t) => sum + Number(t.amount || 0), 0);
-  const dayDebit = transactions.filter(t => t.type === "debit").reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  const dayCredit = dayCash.credit;
+  const dayDebit = dayCash.debit;
   const todayValue = dateInputValue(new Date());
 
   return (
@@ -656,6 +664,7 @@ export default function Ledger() {
           <ul className="divide-y divide-zinc-200">
             {transactions.slice(0, 50).map(t => {
               const customer = customerById[t.customer_id];
+              const remaining = txnRemaining(t);
               return (
                 <li key={t.id}
                   onClick={() => setEditTxn(t)}
@@ -669,6 +678,16 @@ export default function Ledger() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold truncate">{customer?.name || "Personal / Other"}</span>
                       <span className="text-[10px] uppercase tracking-wider text-zinc-400">{t.category || "Other"}</span>
+                      {t.on_credit && remaining > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
+                          <Clock className="w-2.5 h-2.5" />On Credit · ₹{fmtAmount(remaining)} due
+                        </span>
+                      )}
+                      {t.on_credit && remaining <= 0 && (
+                        <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-sm">
+                          Paid
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
                       <span>{fmtDateTime(t.date)}</span>
@@ -678,6 +697,14 @@ export default function Ledger() {
                         </span>
                       )}
                       {t.note && <span className="truncate">{t.note}</span>}
+                    </div>
+                    <div className="mt-1.5">
+                      <CreditPaymentActions
+                        txn={t}
+                        banks={banks}
+                        onUpdated={() => { load(); setTransactionVersion(v => v + 1); }}
+                        showUndo={t.type === "debit"}
+                      />
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
