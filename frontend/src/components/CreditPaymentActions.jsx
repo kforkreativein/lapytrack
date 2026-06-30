@@ -19,6 +19,8 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
   const [partialMethod, setPartialMethod] = useState("");
   const [fullOpen, setFullOpen] = useState(false);
   const [fullMethod, setFullMethod] = useState("");
+  const [fullNote, setFullNote] = useState("");
+  const [partialNote, setPartialNote] = useState("");
   const [saving, setSaving] = useState(false);
 
   const remaining = txnRemaining(txn);
@@ -28,12 +30,13 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
   const fullLabel = isExpense ? "Paid Full" : "Received Full";
   const partialLabel = isExpense ? "Part Pay" : "Part Received";
 
-  const recordPayment = async (amount, paymentMethod, { withUndo = false } = {}) => {
+  const recordPayment = async (amount, paymentMethod, { withUndo = false, note = "" } = {}) => {
     setSaving(true);
     try {
       await api.post(`/transactions/${txn.id}/payments`, {
         amount,
         payment_method: paymentMethod || banks[0]?.name || "Cash",
+        ...(note ? { note } : {}),
       });
       onUpdated();
 
@@ -72,9 +75,10 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
 
   const handleFullSubmit = async (e) => {
     e.preventDefault();
-    await recordPayment(remaining, fullMethod || banks[0]?.name || "Cash", { withUndo: isExpense });
+    await recordPayment(remaining, fullMethod || banks[0]?.name || "Cash", { withUndo: isExpense, note: fullNote });
     setFullOpen(false);
     setFullMethod("");
+    setFullNote("");
   };
 
   const handlePartialSubmit = async (e) => {
@@ -82,10 +86,11 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
     const amt = parseFloat(partialAmount);
     if (!amt || amt <= 0) { toast.error("Enter a valid amount"); return; }
     if (amt > remaining) { toast.error(`Maximum ₹${fmtAmount(remaining)}`); return; }
-    await recordPayment(amt, partialMethod || banks[0]?.name, { withUndo: false });
+    await recordPayment(amt, partialMethod || banks[0]?.name, { withUndo: false, note: partialNote });
     setPartialOpen(false);
     setPartialAmount("");
     setPartialMethod("");
+    setPartialNote("");
   };
 
   const btnClass = compact
@@ -140,6 +145,11 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
                 onSelect={setFullMethod}
               />
             )}
+            <div>
+              <Label className="kpi-label">Note <span className="text-zinc-400 font-normal">(optional)</span></Label>
+              <Input value={fullNote} onChange={e => setFullNote(e.target.value)}
+                placeholder="e.g. advance for parts" className="mt-1.5 rounded-sm border-zinc-300" />
+            </div>
             <Button type="submit" disabled={saving} className={`w-full rounded-sm h-11 text-white ${isExpense ? "bg-red-600 hover:bg-red-700" : "bg-green-700 hover:bg-green-800"}`}>
               {saving ? "Saving…" : `Record ₹${fmtAmount(remaining)}`}
             </Button>
@@ -185,6 +195,11 @@ export default function CreditPaymentActions({ txn, banks, onUpdated, showUndo =
                 onSelect={setPartialMethod}
               />
             )}
+            <div>
+              <Label className="kpi-label">Note <span className="text-zinc-400 font-normal">(optional)</span></Label>
+              <Input value={partialNote} onChange={e => setPartialNote(e.target.value)}
+                placeholder="e.g. advance for parts" className="mt-1.5 rounded-sm border-zinc-300" />
+            </div>
             <Button type="submit" disabled={saving} className="w-full rounded-sm bg-zinc-950 hover:bg-zinc-800 h-11">
               {saving ? "Saving…" : "Record Payment"}
             </Button>

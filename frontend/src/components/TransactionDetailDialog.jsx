@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   TrendingUp, TrendingDown, Landmark, Clock, Trash2, IndianRupee, Pencil,
@@ -35,6 +39,7 @@ export default function TransactionDetailDialog({
   const [txn, setTxn] = useState(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -89,7 +94,6 @@ export default function TransactionDetailDialog({
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("Delete this transaction?")) return;
     setDeleting(true);
     try {
       await api.delete(`/transactions/${txnId}`);
@@ -98,7 +102,7 @@ export default function TransactionDetailDialog({
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed to delete");
-    } finally { setDeleting(false); }
+    } finally { setDeleting(false); setConfirmDelete(false); }
   };
 
   const remaining = txn ? txnRemaining(txn) : 0;
@@ -269,7 +273,7 @@ export default function TransactionDetailDialog({
                 className="flex-1 rounded-sm h-10 border-zinc-300">
                 <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
               </Button>
-              <Button type="button" variant="outline" disabled={deleting} onClick={handleDelete}
+              <Button type="button" variant="outline" disabled={deleting} onClick={() => setConfirmDelete(true)}
                 className="rounded-sm h-10 border-red-300 text-red-700 hover:bg-red-50 px-3">
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
@@ -278,5 +282,20 @@ export default function TransactionDetailDialog({
         )}
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialogContent className="rounded-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this transaction?</AlertDialogTitle>
+          <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="rounded-sm">Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleDelete} className="rounded-sm bg-red-600 hover:bg-red-700">
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

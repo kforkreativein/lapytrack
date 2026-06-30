@@ -519,6 +519,7 @@ class DeviceIn(BaseModel):
     issue_categories: List[str] = []
     issue_description: Optional[str] = ""
     repair_status: Optional[str] = "not_started"
+    repair_cost: Optional[float] = None
 
 class DeviceUpdate(BaseModel):
     device_type: Optional[str] = None
@@ -544,6 +545,7 @@ class MovementIn(BaseModel):
     remarks: Optional[str] = ""
     repair_charge: Optional[float] = None
     repair_payment_method: Optional[str] = "Cash"
+    repair_on_credit: Optional[bool] = False
 
 # ── Device Routes ─────────────────────────────────────────────────────────────
 async def generate_job_number() -> str:
@@ -573,6 +575,7 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         # ponytail: QR not stored — enrich_device regenerates it on every read, saving ~6KB/device
         "status": "in_stock" if payload.category == "stock" else "in_repair",
         "repair_status": payload.repair_status or "not_started",
+        "repair_cost": payload.repair_cost,
         "inward_date": t, "outward_date": None, "created_by": user["user_id"],
         "created_at": t, "updated_at": t,
     }
@@ -720,12 +723,13 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
                             "note": None, "created_at": t}
                 await db.customers.insert_one(with_shop(user, existing))
             customer_id = existing["id"]
+        on_credit = bool(payload.repair_on_credit)
         txn = {"id": str(uuid.uuid4()), "amount": round(payload.repair_charge, 2),
                "type": "credit", "category": "Repair Income",
                "note": f"Repair charge – {device.get('brand','')} {device.get('model','')} ({device.get('job_number','')})".strip(" –()"),
-               "payment_method": payload.repair_payment_method or "Cash",
+               "payment_method": "On Credit" if on_credit else (payload.repair_payment_method or "Cash"),
                "customer_id": customer_id, "date": t, "created_at": t,
-               "on_credit": False, "amount_paid": 0.0, "payments": []}
+               "on_credit": on_credit, "amount_paid": 0.0, "payments": []}
         await db.transactions.insert_one(with_shop(user, txn))
 
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
@@ -750,10 +754,17 @@ async def stats(user: dict = Depends(get_current_user)):
     monthly_inward = await db.movements.count_documents(scoped_filter(user, {"movement_type": "inward", "created_at": {"$gte": month_start}}))
     monthly_outward = await db.movements.count_documents(scoped_filter(user, {"movement_type": "outward", "created_at": {"$gte": month_start}}))
     recent = await db.movements.find(scoped_filter(user), {"_id": 0}).sort("created_at", -1).to_list(8)
+    # Repair status counts (only for active/in-repair devices)
+    rs_not_started = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": {"$in": ["not_started", None]}}))
+    rs_in_progress = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": "in_progress"}))
+    rs_completed   = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": "completed"}))
+    rs_delivered   = await db.devices.count_documents(scoped_filter(user, {"repair_status": "delivered"}))
     return {"total": total, "in_stock": in_stock, "issued": issued, "in_repair": in_repair,
             "overdue": overdue, "laptops": laptops, "desktops": desktops,
             "monthly_inward": monthly_inward, "monthly_outward": monthly_outward,
-            "recent_movements": recent}
+            "recent_movements": recent,
+            "rs_not_started": rs_not_started, "rs_in_progress": rs_in_progress,
+            "rs_completed": rs_completed, "rs_delivered": rs_delivered}
 
 # ── Photo Upload (disabled) ───────────────────────────────────────────────────
 # Photo feature removed to preserve MongoDB Atlas free-tier storage (512 MB).
@@ -816,6 +827,7 @@ class PaymentRecord(BaseModel):
     amount: float
     payment_method: Optional[str] = "Cash"
     date: Optional[str] = None
+    note: Optional[str] = None
 
 def txn_balance_contribution(txn: dict) -> float:
     """Outstanding balance effect of a transaction."""
@@ -1080,6 +1092,7 @@ async def record_payment(txn_id: str, body: PaymentRecord, user: dict = Depends(
         "amount": amount,
         "payment_method": body.payment_method or "Cash",
         "date": body.date or now_iso(),
+        **({"note": body.note} if body.note else {}),
     }
     new_paid = round(paid + amount, 2)
     await db.transactions.update_one(

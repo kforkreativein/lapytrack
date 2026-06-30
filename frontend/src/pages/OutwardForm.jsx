@@ -32,6 +32,7 @@ export default function OutwardForm() {
   const [remarks, setRemarks] = useState("");
   const [repairCharge, setRepairCharge] = useState("");
   const [repairPayment, setRepairPayment] = useState("Cash");
+  const [repairOnCredit, setRepairOnCredit] = useState(false);
   const [banks, setBanks] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -48,6 +49,13 @@ export default function OutwardForm() {
   }, []);
 
   const selectedDevice = devices.find(d => d.device_id === deviceId);
+
+  // Pre-fill repair cost from device when device changes
+  useEffect(() => {
+    if (selectedDevice?.repair_cost) {
+      setRepairCharge(String(selectedDevice.repair_cost));
+    }
+  }, [selectedDevice?.device_id]); // eslint-disable-line
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -68,6 +76,7 @@ export default function OutwardForm() {
         remarks,
         repair_charge: repairCharge ? parseFloat(repairCharge) : null,
         repair_payment_method: repairPayment,
+        repair_on_credit: repairOnCredit,
       });
       toast.success("Device handed over");
       navigate(`/devices/${deviceId}`);
@@ -255,20 +264,33 @@ export default function OutwardForm() {
               </div>
               <p className="text-xs text-zinc-400 mt-1.5">Will auto-create an income entry in the Khata Book for this customer.</p>
             </div>
-            {repairCharge && parseFloat(repairCharge) > 0 && banks.length > 0 && (
-              <div>
-                <Label className="kpi-label">Payment method</Label>
-                <div className="flex flex-wrap gap-2 mt-1.5">
-                  {banks.map(b => (
-                    <button key={b.bank_id} type="button"
-                      onClick={() => setRepairPayment(b.name)}
-                      className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${
-                        repairPayment === b.name
-                          ? "bg-zinc-950 text-white border-zinc-950"
-                          : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"
-                      }`}>{b.name}</button>
-                  ))}
-                </div>
+            {repairCharge && parseFloat(repairCharge) > 0 && (
+              <div className="space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={repairOnCredit}
+                    onChange={e => setRepairOnCredit(e.target.checked)}
+                    className="w-4 h-4 rounded border-zinc-300"
+                  />
+                  <span className="text-sm font-medium">On Credit — customer pays later</span>
+                </label>
+                {!repairOnCredit && banks.length > 0 && (
+                  <div>
+                    <Label className="kpi-label">Payment method</Label>
+                    <div className="flex flex-wrap gap-2 mt-1.5">
+                      {banks.map(b => (
+                        <button key={b.bank_id} type="button"
+                          onClick={() => setRepairPayment(b.name)}
+                          className={`px-3 py-1.5 text-xs rounded-sm border font-medium transition-colors ${
+                            repairPayment === b.name
+                              ? "bg-zinc-950 text-white border-zinc-950"
+                              : "bg-white text-zinc-700 border-zinc-300 hover:border-zinc-600"
+                          }`}>{b.name}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

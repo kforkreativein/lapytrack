@@ -9,7 +9,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ArrowDownToLine, X, Loader2, User, Phone, Mail, Check, PlusCircle } from "lucide-react";
+import { ArrowDownToLine, X, Loader2, User, Phone, Mail, Check, PlusCircle, IndianRupee } from "lucide-react";
 
 export default function InwardForm() {
   const navigate = useNavigate();
@@ -44,6 +44,7 @@ export default function InwardForm() {
   const [customIssue, setCustomIssue] = useState("");
   const [issueNotes, setIssueNotes] = useState("");
 
+  const [repairCost, setRepairCost] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [existingDevice, setExistingDevice] = useState(null);
   const [remarks, setRemarks] = useState("");
@@ -213,6 +214,7 @@ export default function InwardForm() {
         customer_email: customerEmail,
         issue_categories: selectedIssues,
         issue_description: issueNotes,
+        repair_cost: repairCost ? parseFloat(repairCost) : null,
       });
       toast.success(`Inward logged · ${data.job_number}`);
       navigate(`/devices/${data.device_id}`);
@@ -526,6 +528,24 @@ export default function InwardForm() {
                     rows={3}
                     placeholder="Any extra details about the issue…"
                   />
+                </div>
+
+                {/* Repair cost estimate */}
+                <div>
+                  <Label className="kpi-label flex items-center gap-1.5">
+                    <IndianRupee className="w-3 h-3" />
+                    Repair Cost Estimate <span className="text-zinc-400 font-normal normal-case">(optional — will pre-fill on outward)</span>
+                  </Label>
+                  <div className="relative mt-1.5">
+                    <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                    <Input
+                      value={repairCost}
+                      onChange={e => setRepairCost(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="0"
+                      className="pl-9 rounded-sm border-zinc-300 h-10 font-mono"
+                    />
+                  </div>
                 </div>
 
               </div>

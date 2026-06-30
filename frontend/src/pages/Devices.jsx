@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, downloadCsv } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,23 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine, Download, FileText } from "lucide-react";
+import { Plus, Search, Laptop, Monitor, Phone, ArrowDownToLine, ArrowUpFromLine, Download, FileText, Clock, Wrench, CheckCircle2, PackageCheck } from "lucide-react";
+
+function RepairStatusChip({ status }) {
+  const map = {
+    not_started: { label: "Not Started", cls: "bg-zinc-100 text-zinc-500 border-zinc-200" },
+    in_progress: { label: "In Progress", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+    completed:   { label: "Completed",   cls: "bg-blue-50 text-blue-700 border-blue-200" },
+    delivered:   { label: "Delivered",   cls: "bg-green-50 text-green-700 border-green-200" },
+  };
+  if (!status || status === "not_started") return null;
+  const { label, cls } = map[status] || { label: status, cls: "bg-zinc-100 text-zinc-500 border-zinc-200" };
+  return (
+    <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-sm border ${cls}`}>
+      {label}
+    </span>
+  );
+}
 
 const PERIODS = [
   { value: "all", label: "All Time" },
@@ -28,6 +44,7 @@ function formatShortDate(iso) {
 }
 
 export default function Devices() {
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
@@ -59,10 +76,12 @@ export default function Devices() {
     queryKey: ["stats"],
     queryFn: async () => (await api.get("/stats")).data,
   });
-  const monthlyStats = {
-    monthly_inward: stats?.monthly_inward || 0,
-    monthly_outward: stats?.monthly_outward || 0,
-  };
+  const rsStats = [
+    { label: "Not Started", value: stats?.rs_not_started || 0, icon: Clock, cls: "text-zinc-500" },
+    { label: "In Progress", value: stats?.rs_in_progress || 0, icon: Wrench, cls: "text-amber-600" },
+    { label: "Completed",   value: stats?.rs_completed   || 0, icon: CheckCircle2, cls: "text-blue-600" },
+    { label: "Delivered",   value: stats?.rs_delivered   || 0, icon: PackageCheck, cls: "text-green-600" },
+  ];
   const loading = devicesLoading && devices.length === 0;
 
   return (
@@ -87,25 +106,18 @@ export default function Devices() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:gap-3 mb-4">
-        <div className="border border-zinc-200 bg-white p-3 md:p-4">
-          <div className="kpi-label flex items-center gap-2">
-            <ArrowDownToLine className="w-3 h-3 text-blue-600" />
-            Inward This Month
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 mb-4">
+        {rsStats.map(({ label, value, icon: Icon, cls }) => (
+          <div key={label} className="border border-zinc-200 bg-white p-3 md:p-4">
+            <div className="kpi-label flex items-center gap-2">
+              <Icon className={`w-3 h-3 ${cls}`} />
+              {label}
+            </div>
+            <div className="font-heading text-2xl md:text-3xl font-bold mt-2 tabular-nums">
+              {value}
+            </div>
           </div>
-          <div className="font-heading text-2xl md:text-3xl font-bold mt-2 tabular-nums">
-            {monthlyStats.monthly_inward}
-          </div>
-        </div>
-        <div className="border border-zinc-200 bg-white p-3 md:p-4">
-          <div className="kpi-label flex items-center gap-2">
-            <ArrowUpFromLine className="w-3 h-3 text-zinc-600" />
-            Outward This Month
-          </div>
-          <div className="font-heading text-2xl md:text-3xl font-bold mt-2 tabular-nums">
-            {monthlyStats.monthly_outward}
-          </div>
-        </div>
+        ))}
       </div>
 
       {/* Filters */}
@@ -179,6 +191,7 @@ export default function Devices() {
                         {d.job_number || d.serial_number}
                       </span>
                       <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
+                      <RepairStatusChip status={d.repair_status} />
                     </div>
                     <div className="font-semibold text-sm mt-1.5 break-words">
                       {d.brand} {d.model}
@@ -232,7 +245,9 @@ export default function Devices() {
               </thead>
               <tbody>
                 {devices.map((d) => (
-                  <tr key={d.device_id} className="border-b border-zinc-200 hover:bg-zinc-50 transition-colors duration-150"
+                  <tr key={d.device_id}
+                      onClick={() => navigate(`/devices/${d.device_id}`)}
+                      className="border-b border-zinc-200 hover:bg-zinc-50 transition-colors duration-150 cursor-pointer"
                       data-testid={`device-row-${d.device_id}`}>
                     <td className="px-4 py-3 font-mono text-xs font-bold">{d.job_number || "—"}</td>
                     <td className="px-4 py-3">
@@ -253,19 +268,16 @@ export default function Devices() {
                     <td className="px-4 py-3 text-xs text-zinc-600 font-mono whitespace-nowrap">{formatShortDate(d.inward_date || d.created_at)}</td>
                     <td className="px-4 py-3 text-xs text-zinc-600 font-mono whitespace-nowrap">{formatShortDate(d.outward_date)}</td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        <button type="button" onClick={() => window.open(`/job/${d.device_id}`, "_blank", "noopener")}
-                          className="text-xs text-zinc-500 hover:text-zinc-950 flex items-center gap-1">
-                          <FileText className="w-3 h-3" /> Job Sheet
-                        </button>
-                        <Link to={`/devices/${d.device_id}`} className="text-xs font-semibold text-zinc-950 hover:underline"
-                              data-testid={`view-device-${d.device_id}`}>
-                          Detail →
-                        </Link>
+                      <div className="flex flex-col gap-1">
+                        <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
+                        <RepairStatusChip status={d.repair_status} />
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                      <button type="button" onClick={() => window.open(`/job/${d.device_id}`, "_blank", "noopener")}
+                        className="text-xs text-zinc-500 hover:text-zinc-950 flex items-center gap-1 ml-auto">
+                        <FileText className="w-3 h-3" /> Job Sheet
+                      </button>
                     </td>
                   </tr>
                 ))}

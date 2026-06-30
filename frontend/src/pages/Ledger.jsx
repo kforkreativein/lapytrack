@@ -461,31 +461,40 @@ export default function Ledger() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 border border-zinc-200 mb-6 animate-fade-up">
-        <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 border border-zinc-200 mb-6 animate-fade-up">
+        <div className="border-r border-b md:border-b-0 border-zinc-200 p-4 md:p-5">
           <div className="kpi-label text-[9px] md:text-[10px]">Total Income (All Time)</div>
           <div className="flex items-center gap-1.5 mt-1.5">
             <TrendingUp className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
-            <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-green-700">
+            <span className="font-heading text-xl md:text-2xl font-bold tabular-nums text-green-700">
               ₹{ledgerTotals.total_credit.toLocaleString("en-IN")}
             </span>
           </div>
         </div>
-        <div className="sm:border-r border-b sm:border-b-0 border-zinc-200 p-4 md:p-5">
+        <div className="border-b md:border-r md:border-b-0 border-zinc-200 p-4 md:p-5">
           <div className="kpi-label text-[9px] md:text-[10px]">Total Expenses (All Time)</div>
           <div className="flex items-center gap-1.5 mt-1.5">
             <TrendingDown className="w-3.5 h-3.5 text-red-600 flex-shrink-0" />
-            <span className="font-heading text-2xl md:text-3xl font-bold tabular-nums text-red-600">
+            <span className="font-heading text-xl md:text-2xl font-bold tabular-nums text-red-600">
               ₹{ledgerTotals.total_debit.toLocaleString("en-IN")}
             </span>
           </div>
         </div>
-        <div className="p-4 md:p-5">
-          <div className="kpi-label text-[9px] md:text-[10px]">Customers Owe You (Outstanding)</div>
+        <div className="border-r border-zinc-200 p-4 md:p-5">
+          <div className="kpi-label text-[9px] md:text-[10px]">You'll Get (Pending)</div>
           <div className="flex items-center gap-1.5 mt-1.5">
-            <Minus className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
-            <span className={`font-heading text-2xl md:text-3xl font-bold tabular-nums ${totalGet - totalGive >= 0 ? "text-green-700" : "text-red-600"}`}>
-              ₹{Math.abs(totalGet - totalGive).toLocaleString("en-IN")}
+            <TrendingUp className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+            <span className="font-heading text-xl md:text-2xl font-bold tabular-nums text-green-700">
+              ₹{totalGet.toLocaleString("en-IN")}
+            </span>
+          </div>
+        </div>
+        <div className="p-4 md:p-5">
+          <div className="kpi-label text-[9px] md:text-[10px]">You'll Give (Pending)</div>
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <TrendingDown className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+            <span className="font-heading text-xl md:text-2xl font-bold tabular-nums text-red-600">
+              ₹{totalGive.toLocaleString("en-IN")}
             </span>
           </div>
         </div>

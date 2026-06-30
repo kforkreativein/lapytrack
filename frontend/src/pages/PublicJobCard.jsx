@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Loader2, Printer, Calendar, Tag, Phone, Mail, Monitor } from "lucide-react";
+import { Loader2, Printer, Calendar, Tag, Phone, Mail, Monitor, MessageCircle } from "lucide-react";
 
 function fmt(iso) {
   if (!iso) return "";
@@ -13,39 +13,36 @@ function fmt(iso) {
   } catch { return iso; }
 }
 
-function StatusPill({ status }) {
-  const styles = {
+function StatusPill({ status, repairStatus }) {
+  // Show repair progress if meaningful; fall back to movement status
+  const repair = {
+    not_started: null,
+    in_progress: { label: "In Progress",  cls: "bg-amber-50 text-amber-700 border-amber-300" },
+    completed:   { label: "Repair Complete", cls: "bg-blue-50 text-blue-700 border-blue-300" },
+    delivered:   { label: "Delivered",    cls: "bg-green-50 text-green-700 border-green-300" },
+  }[repairStatus];
+
+  if (repair) {
+    return (
+      <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${repair.cls}`}>
+        {repair.label}
+      </span>
+    );
+  }
+
+  const movStyles = {
     in_repair: "bg-amber-50 text-amber-700 border-amber-200",
     in_stock:  "bg-green-50 text-green-700 border-green-200",
     issued:    "bg-zinc-100 text-zinc-600 border-zinc-200",
-    ready:     "bg-blue-50 text-blue-700 border-blue-200",
   };
-  const labels = {
+  const movLabels = {
     in_repair: "In Repair",
     in_stock:  "In Stock",
     issued:    "Issued / Returned",
-    ready:     "Ready for Pickup",
   };
-  const cls = styles[status] || "bg-zinc-50 text-zinc-500 border-zinc-200";
-  const label = labels[status] || (status || "").replace(/_/g, " ").toUpperCase();
   return (
-    <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${cls}`}>
-      {label}
-    </span>
-  );
-}
-
-function RepairStatusPill({ status }) {
-  const map = {
-    not_started: { label: "Not Started",  cls: "bg-zinc-100 text-zinc-500 border-zinc-200" },
-    in_progress: { label: "In Progress",  cls: "bg-amber-50 text-amber-700 border-amber-300" },
-    completed:   { label: "Completed",    cls: "bg-blue-50 text-blue-700 border-blue-300" },
-    delivered:   { label: "Delivered",    cls: "bg-green-50 text-green-700 border-green-300" },
-  };
-  const { label, cls } = map[status] || { label: status, cls: "bg-zinc-50 text-zinc-500 border-zinc-200" };
-  return (
-    <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${cls}`}>
-      Repair: {label}
+    <span className={`inline-block border text-sm font-semibold px-4 py-1.5 rounded-full ${movStyles[status] || "bg-zinc-50 text-zinc-500 border-zinc-200"}`}>
+      {movLabels[status] || (status || "").replace(/_/g, " ")}
     </span>
   );
 }
@@ -106,14 +103,27 @@ export default function PublicJobCard() {
       <div className="min-h-screen bg-zinc-100">
 
         {/* Sticky top bar (screen only) */}
-        <div className="no-print sticky top-0 z-10 bg-white border-b border-zinc-200 px-4 py-3 flex items-center justify-between">
+        <div className="no-print sticky top-0 z-10 bg-white border-b border-zinc-200 px-4 py-3 flex items-center justify-between gap-2">
           <span className="font-heading font-bold text-sm tracking-tight text-zinc-950">
             {device.job_number}
           </span>
-          <Button onClick={() => window.print()} variant="outline" size="sm"
-            className="rounded-sm border-zinc-300 h-9 text-xs">
-            <Printer className="w-3.5 h-3.5 mr-1.5" /> Print
-          </Button>
+          <div className="flex items-center gap-2">
+            {device.customer_phone && (
+              <a
+                href={`https://wa.me/${device.customer_phone.replace(/\D/g, "")}?text=${encodeURIComponent(`Hi ${device.customer_name}, your device ${device.brand} ${device.model} (${device.job_number}) status update: ${jobUrl}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button variant="outline" size="sm" className="rounded-sm border-green-300 text-green-700 hover:bg-green-50 h-9 text-xs">
+                  <MessageCircle className="w-3.5 h-3.5 mr-1.5" /> WhatsApp
+                </Button>
+              </a>
+            )}
+            <Button onClick={() => window.print()} variant="outline" size="sm"
+              className="rounded-sm border-zinc-300 h-9 text-xs">
+              <Printer className="w-3.5 h-3.5 mr-1.5" /> Print
+            </Button>
+          </div>
         </div>
 
         <div className="max-w-xl mx-auto px-4 py-6 md:py-10">
@@ -145,10 +155,7 @@ export default function PublicJobCard() {
 
             {/* ── Status strip ────────────────────────────────────── */}
             <div className="px-6 py-4 border-b border-zinc-100 flex flex-wrap items-center gap-3">
-              <StatusPill status={device.status} />
-              {device.repair_status && device.repair_status !== "not_started" && (
-                <RepairStatusPill status={device.repair_status} />
-              )}
+              <StatusPill status={device.status} repairStatus={device.repair_status} />
               <div className="flex items-center gap-1.5 text-sm text-zinc-500">
                 <Calendar className="w-4 h-4 flex-shrink-0" />
                 Inward: {fmt(device.inward_date)}
