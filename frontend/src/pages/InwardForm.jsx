@@ -48,6 +48,14 @@ export default function InwardForm() {
   const [existingDevice, setExistingDevice] = useState(null);
   const [remarks, setRemarks] = useState("");
 
+  // Customer picker
+  const [customers, setCustomers] = useState([]);
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Server readiness (blocks submit while Render is cold-starting)
+  const [serverReady, setServerReady] = useState(false);
+
   // Derived values
   const brand = brandIsOther ? brandCustom : (brands.find(b => b.brand_id === selectedBrandId)?.name || "");
   // modelCustom is used when: brand is typed ("Other"), brand has no catalog models, or model is typed ("Other")
@@ -58,8 +66,13 @@ export default function InwardForm() {
       .then(([b, ic]) => {
         setBrands(b.data);
         setIssueCategories(ic.data);
+        setServerReady(true);
+        // Load customers for picker in the background
+        api.get("/customers").then(r => setCustomers(r.data)).catch(() => {});
       })
-      .catch(() => {});
+      .catch(() => {
+        // Backend still cold-starting; submit stays disabled until retry succeeds
+      });
   }, []);
 
   useEffect(() => {
@@ -100,6 +113,27 @@ export default function InwardForm() {
     setSelectedIssues(prev =>
       prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name]
     );
+  };
+
+  const handleCustomerNameChange = (val) => {
+    setCustomerName(val);
+    if (val.trim() && customers.length > 0) {
+      const q = val.toLowerCase();
+      const matches = customers.filter(c =>
+        c.name.toLowerCase().includes(q) || (c.phone || "").includes(q)
+      ).slice(0, 6);
+      setCustomerSuggestions(matches);
+      setShowSuggestions(matches.length > 0);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectCustomer = (c) => {
+    setCustomerName(c.name);
+    setCustomerPhone(c.phone || "");
+    setCustomerEmail(c.email || "");
+    setShowSuggestions(false);
   };
 
   const addCustomIssue = () => {
@@ -199,14 +233,34 @@ export default function InwardForm() {
                 <span className="kpi-label">Customer Details</span>
               </div>
               <div className="p-4 md:p-5 space-y-4">
-                <div>
+                <div className="relative">
                   <Label className="kpi-label">Full name *</Label>
                   <Input
                     data-testid="customer-name-input"
-                    required value={customerName} onChange={e => setCustomerName(e.target.value)}
+                    required
+                    value={customerName}
+                    onChange={e => handleCustomerNameChange(e.target.value)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                    onFocus={() => customerName.trim() && setShowSuggestions(customerSuggestions.length > 0)}
                     className="mt-1.5 rounded-sm border-zinc-300 h-10"
-                    placeholder="Rahul Sharma"
+                    placeholder="Search existing or type new name…"
+                    autoComplete="off"
                   />
+                  {showSuggestions && (
+                    <div className="absolute z-20 left-0 right-0 bg-white border border-zinc-200 rounded-sm shadow-lg mt-0.5 max-h-48 overflow-y-auto">
+                      {customerSuggestions.map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={() => selectCustomer(c)}
+                          className="w-full text-left px-3 py-2 hover:bg-zinc-50 border-b border-zinc-100 last:border-0"
+                        >
+                          <div className="text-sm font-semibold truncate">{c.name}</div>
+                          <div className="text-xs text-zinc-500">{c.phone}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -452,11 +506,11 @@ export default function InwardForm() {
           </Button>
           <Button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (!serverReady && !existingDeviceId)}
             data-testid="submit-inward-button"
             className="rounded-sm bg-zinc-950 hover:bg-zinc-800 h-11 px-6 flex-1 sm:flex-none"
           >
-            {submitting ? "Saving…" : (existingDeviceId ? "Confirm Return" : "Generate Job & Save")}
+            {submitting ? "Saving…" : (!serverReady && !existingDeviceId ? "Connecting to server…" : (existingDeviceId ? "Confirm Return" : "Generate Job & Save"))}
           </Button>
         </div>
       </form>

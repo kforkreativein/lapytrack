@@ -74,12 +74,14 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     pingBackend(); // wake Render cold start immediately on any page load
+    // ponytail: keep Render free-tier alive; sleeps after 15 min, ping every 10 min
+    const keepAlive = setInterval(pingBackend, 10 * 60 * 1000);
     (async () => {
       const [, userData] = await Promise.all([refreshSetupStatus(), checkAuth()]);
       if (userData) { checkPinTimeout(); startPinTimer(); }
       setLoading(false);
     })();
-    return stopPinTimer;
+    return () => { clearInterval(keepAlive); stopPinTimer(); };
   }, [refreshSetupStatus, checkAuth, checkPinTimeout, startPinTimer, stopPinTimer]);
 
   const setupPin = async (shopName, pin, email, password, { register = false } = {}) => {
