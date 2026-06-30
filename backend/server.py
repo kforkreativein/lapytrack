@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-import os, uuid, logging, io, csv, hashlib, re
+import os, uuid, logging, io, csv, hashlib, re, asyncio
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
@@ -271,21 +271,24 @@ def generate_qr_svg(job_id: str) -> str:
     img.save(buf)
     return buf.getvalue().decode('utf-8')
 
-def enrich_device(doc: dict | None) -> dict | None:
+async def enrich_device(doc: dict | None) -> dict | None:
     """Return device with a fresh QR code (only while device is active, not after outward)."""
     if not doc:
         return doc
     out = dict(doc)
     device_id = out.get("device_id")
-    # Clear QR once device is issued (outward) — restores automatically on next inward
+    # ponytail: run in thread so CPU-bound QR gen doesn't block asyncio event loop on Render's 0.1 vCPU
     if device_id and out.get("status") != "issued":
-        out["qr_code"] = generate_qr_svg(device_id)
+        try:
+            out["qr_code"] = await asyncio.to_thread(generate_qr_svg, device_id)
+        except Exception:
+            out["qr_code"] = None
     else:
         out["qr_code"] = None
     return out
 
-def public_device_view(doc: dict) -> dict:
-    enriched = enrich_device(doc) or {}
+async def public_device_view(doc: dict) -> dict:
+    enriched = await enrich_device(doc) or {}
     allowed = {
         "device_id", "job_number", "device_type", "brand", "model", "serial_number",
         "condition", "category", "customer_name", "customer_phone", "issue_categories",
@@ -582,7 +585,7 @@ async def create_device(payload: DeviceIn, user: dict = Depends(get_current_user
         "created_at": t,
     }))
     doc.pop("_id", None)
-    return enrich_device(doc)
+    return {**doc, "qr_code": None}
 
 @api_router.get("/devices")
 async def list_devices(status: Optional[str] = None, category: Optional[str] = None,
@@ -603,7 +606,7 @@ async def list_devices(status: Optional[str] = None, category: Optional[str] = N
                 {"job_number": {"$regex": safe_q, "$options": "i"}},
             ]
     devices = await db.devices.find(scoped_filter(user, filt), {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return [enrich_device(d) for d in devices]
+    return list(await asyncio.gather(*[enrich_device(d) for d in devices]))
 
 @api_router.get("/devices/export/csv")
 async def export_csv(
@@ -638,14 +641,14 @@ async def export_csv(
 async def get_device(device_id: str, user: dict = Depends(get_current_user)):
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": device_id}), {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
-    return enrich_device(doc)
+    return await enrich_device(doc)
 
 @api_router.get("/public/job/{device_id}")
 async def get_job_public(device_id: str):
     """Public route — no auth required. Used by QR code scans."""
     doc = await db.devices.find_one({"device_id": device_id}, {"_id": 0})
     if not doc: raise HTTPException(404, "Device not found")
-    return public_device_view(doc)
+    return await public_device_view(doc)
 
 @api_router.patch("/devices/{device_id}")
 async def update_device(device_id: str, payload: DeviceUpdate, user: dict = Depends(get_current_user)):
@@ -655,7 +658,7 @@ async def update_device(device_id: str, payload: DeviceUpdate, user: dict = Depe
     result = await db.devices.update_one(scoped_filter(user, {"device_id": device_id}), {"$set": data})
     if result.matched_count == 0: raise HTTPException(404, "Device not found")
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": device_id}), {"_id": 0})
-    return enrich_device(doc)
+    return await enrich_device(doc)
 
 @api_router.delete("/devices/{device_id}")
 async def delete_device(device_id: str, user: dict = Depends(get_current_user)):
@@ -721,7 +724,7 @@ async def create_movement(payload: MovementIn, user: dict = Depends(get_current_
         await db.transactions.insert_one(with_shop(user, txn))
 
     doc = await db.devices.find_one(scoped_filter(user, {"device_id": payload.device_id}), {"_id": 0})
-    return enrich_device(doc)
+    return {**(doc or {}), "qr_code": None}
 
 @api_router.get("/movements")
 async def list_movements(device_id: Optional[str] = None, user: dict = Depends(get_current_user)):
