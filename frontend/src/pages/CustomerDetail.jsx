@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowLeft, TrendingUp, TrendingDown, Trash2, Landmark, Clock } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Landmark, Clock } from "lucide-react";
 import PaymentMethodPicker, { txnRemaining } from "@/components/PaymentMethodPicker";
 import CreditPaymentActions from "@/components/CreditPaymentActions";
+import TransactionDetailDialog from "@/components/TransactionDetailDialog";
 
 function fmt(iso) {
   if (!iso) return "";
@@ -33,7 +34,8 @@ export default function CustomerDetail() {
   const [txns, setTxns] = useState([]);
   const [tab, setTab] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(null); // "credit" | "debit" | null
+  const [showAdd, setShowAdd] = useState(null);
+  const [detailTxnId, setDetailTxnId] = useState(null);
   const [form, setForm] = useState({ amount: "", note: "", category: "Other", payment_method: "", on_credit: false });
   const [categories, setCategories] = useState([]);
   const [banks, setBanks] = useState([]);
@@ -83,25 +85,17 @@ export default function CustomerDetail() {
     } finally { setSaving(false); }
   };
 
-  const handleDelete = async (txnId) => {
-    if (!window.confirm("Delete this transaction?")) return;
-    await api.delete(`/transactions/${txnId}`);
-    toast.success("Deleted");
-    load();
-  };
-
   if (loading) return <div className="p-8 text-sm text-zinc-500">Loading…</div>;
 
   const typeCategories = categories.filter(c => c.type === showAdd || c.type === "both");
 
   return (
     <div className="mobile-page max-w-xl mx-auto">
-      <button onClick={() => navigate("/ledger")} className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-950 mb-6 transition-colors">
+      <button onClick={() => navigate("/ledger")} className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-950 mb-6 transition-colors touch-target">
         <ArrowLeft className="w-4 h-4" /> Back to Ledger
       </button>
 
-      {/* Customer header */}
-      <div className="border border-zinc-200 bg-white p-5 mb-4 animate-fade-up">
+      <div className="border border-zinc-200 bg-white p-4 sm:p-5 mb-4 animate-fade-up">
         <div className="text-lg font-heading font-bold">{customer?.name}</div>
         {customer?.phone && <div className="text-sm text-zinc-500 mt-0.5">{customer.phone}</div>}
         <div className={`mt-3 font-heading text-3xl font-bold tabular-nums ${balance > 0 ? "text-green-700" : balance < 0 ? "text-red-600" : "text-zinc-400"}`}>
@@ -112,19 +106,17 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* Action buttons */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <Button onClick={() => setShowAdd("credit")} variant="outline"
-          className="h-11 rounded-sm border-green-200 text-green-700 hover:bg-green-50">
+          className="h-11 rounded-sm border-green-200 text-green-700 hover:bg-green-50 touch-target">
           <TrendingUp className="w-4 h-4 mr-2" /> You Got
         </Button>
         <Button onClick={() => setShowAdd("debit")} variant="outline"
-          className="h-11 rounded-sm border-red-200 text-red-600 hover:bg-red-50">
+          className="h-11 rounded-sm border-red-200 text-red-600 hover:bg-red-50 touch-target">
           <TrendingDown className="w-4 h-4 mr-2" /> You Gave
         </Button>
       </div>
 
-      {/* Tabs */}
       <div className="flex border border-zinc-200 mb-4 bg-white">
         {["all","credit","debit"].map(t => (
           <button key={t} onClick={() => setTab(t)}
@@ -134,7 +126,6 @@ export default function CustomerDetail() {
         ))}
       </div>
 
-      {/* Transaction list */}
       <div className="border border-zinc-200 bg-white">
         {filtered.length === 0 ? (
           <div className="p-10 text-center text-sm text-zinc-500">No transactions</div>
@@ -142,45 +133,51 @@ export default function CustomerDetail() {
           <ul className="divide-y divide-zinc-200">
             {filtered.map(t => {
               const remaining = txnRemaining(t);
+              const payCount = (t.payments || []).length;
               return (
-                <li key={t.id} className="flex items-start gap-3 px-4 py-3.5 group hover:bg-zinc-50">
-                  <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-sm mt-0.5 ${
-                    t.type === "credit" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
-                    {t.type === "credit" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs text-zinc-500">{t.category}</span>
-                      {t.payment_method && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
-                          <Landmark className="w-2.5 h-2.5" />{t.payment_method}
-                        </span>
-                      )}
-                      {t.on_credit && remaining > 0 && (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
-                          <Clock className="w-2.5 h-2.5" />₹{remaining.toLocaleString("en-IN")} due
-                        </span>
-                      )}
+                <li
+                  key={t.id}
+                  onClick={() => setDetailTxnId(t.id)}
+                  className="flex flex-col sm:flex-row sm:items-start gap-2 px-4 py-3.5 cursor-pointer hover:bg-zinc-50 transition-colors"
+                >
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-sm mt-0.5 ${
+                      t.type === "credit" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"}`}>
+                      {t.type === "credit" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                     </div>
-                    {t.note && <div className="text-sm text-zinc-800 truncate">{t.note}</div>}
-                    <div className="text-[11px] text-zinc-400 mt-0.5">{fmt(t.date)}</div>
-                    <div className="mt-1.5">
-                      <CreditPaymentActions
-                        txn={t}
-                        banks={banks}
-                        onUpdated={load}
-                        showUndo={t.type === "debit"}
-                      />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-zinc-500">{t.category}</span>
+                        {t.payment_method && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
+                            <Landmark className="w-2.5 h-2.5" />{t.payment_method}
+                          </span>
+                        )}
+                        {t.on_credit && remaining > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-sm">
+                            <Clock className="w-2.5 h-2.5" />₹{remaining.toLocaleString("en-IN")} due
+                          </span>
+                        )}
+                        {t.on_credit && remaining <= 0 && (
+                          <span className="text-[10px] font-semibold text-green-700 bg-green-50 border border-green-200 px-1.5 py-0.5 rounded-sm">
+                            Paid
+                          </span>
+                        )}
+                        {payCount > 0 && (
+                          <span className="text-[10px] text-zinc-500">{payCount} payment{payCount > 1 ? "s" : ""}</span>
+                        )}
+                      </div>
+                      {t.note && <div className="text-sm text-zinc-800 truncate">{t.note}</div>}
+                      <div className="text-[11px] text-zinc-400 mt-0.5">{fmt(t.date)}</div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex items-center justify-between sm:justify-end gap-2 flex-shrink-0 pl-11 sm:pl-0">
+                    {t.on_credit && remaining > 0 && (
+                      <CreditPaymentActions txn={t} banks={banks} onUpdated={load} showUndo={t.type === "debit"} compact />
+                    )}
                     <span className={`font-mono text-sm font-bold ${t.type === "credit" ? "text-green-700" : "text-red-600"}`}>
                       {t.type === "credit" ? "+" : "-"}₹{t.amount.toLocaleString("en-IN")}
                     </span>
-                    <button onClick={() => handleDelete(t.id)}
-                      className="sm:opacity-0 sm:group-hover:opacity-100 transition-opacity p-2 hover:text-red-600 touch-target">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
                   </div>
                 </li>
               );
@@ -189,12 +186,20 @@ export default function CustomerDetail() {
         )}
       </div>
 
-      {/* Add transaction dialog */}
+      <TransactionDetailDialog
+        txnId={detailTxnId}
+        customerName={customer?.name}
+        banks={banks}
+        onClose={() => setDetailTxnId(null)}
+        onUpdated={load}
+        onDeleted={() => { setDetailTxnId(null); load(); }}
+      />
+
       <Dialog open={!!showAdd} onOpenChange={() => setShowAdd(null)}>
-        <DialogContent className="rounded-sm max-w-[calc(100vw-1.5rem)] sm:max-w-sm max-h-[90vh] overflow-y-auto">
+        <DialogContent className="rounded-sm max-w-[calc(100vw-1rem)] sm:max-w-sm max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="font-heading">
-              {showAdd === "credit" ? "You Got (Credit)" : "You Gave (Debit)"}
+              {showAdd === "credit" ? "You Got" : "You Gave"}
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4 mt-2">
@@ -218,8 +223,8 @@ export default function CustomerDetail() {
                 onCredit={form.on_credit}
                 onCreditChange={v => setForm(f => ({ ...f, on_credit: v }))}
                 creditHint={showAdd === "credit"
-                  ? "Customer will pay later — not counted in today's income."
-                  : "You will pay later — not counted in today's expense."}
+                  ? "Customer pays later — not counted in today's income."
+                  : "You pay later — not counted in today's expense."}
               />
             )}
             <div>
@@ -228,8 +233,8 @@ export default function CustomerDetail() {
                 placeholder="Optional note" className="mt-1.5 rounded-sm border-zinc-300" />
             </div>
             <Button type="submit" disabled={saving}
-              className={`w-full rounded-sm h-10 ${showAdd === "credit" ? "bg-green-700 hover:bg-green-800" : "bg-red-600 hover:bg-red-700"} text-white`}>
-              {saving ? "Saving…" : showAdd === "credit" ? "Add Credit" : "Add Debit"}
+              className={`w-full rounded-sm h-11 ${showAdd === "credit" ? "bg-green-700 hover:bg-green-800" : "bg-red-600 hover:bg-red-700"} text-white`}>
+              {saving ? "Saving…" : "Save Entry"}
             </Button>
           </form>
         </DialogContent>

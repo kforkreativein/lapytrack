@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, formatApiErrorDetail, pingBackend, withRetry } from "@/lib/api";
+import { api, formatApiErrorDetail, pingBackend, withRetry, wakeBackend } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +55,7 @@ export default function InwardForm() {
 
   // Server readiness (blocks submit while Render is cold-starting)
   const [serverReady, setServerReady] = useState(false);
+  const [waking, setWaking] = useState(false);
 
   // Derived values
   const brand = brandIsOther ? brandCustom : (brands.find(b => b.brand_id === selectedBrandId)?.name || "");
@@ -154,12 +155,26 @@ export default function InwardForm() {
     setCustomIssue("");
   };
 
+  const saveInward = async (payload) => {
+    setWaking(true);
+    const ready = await wakeBackend({ maxWaitMs: 90000 });
+    setWaking(false);
+    if (!ready) {
+      throw Object.assign(new Error("timeout"), { noResponse: true });
+    }
+    pingBackend();
+    return withRetry(() => api.post("/devices", payload), { retries: 3, delayMs: 3000 });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (existingDeviceId) {
       setSubmitting(true);
       try {
+        setWaking(true);
+        await wakeBackend({ maxWaitMs: 60000 });
+        setWaking(false);
         pingBackend();
         await withRetry(() =>
           api.post("/movements", { device_id: existingDeviceId, movement_type: "inward", remarks })
@@ -167,9 +182,13 @@ export default function InwardForm() {
         toast.success("Device received back");
         navigate(`/devices/${existingDeviceId}`);
       } catch (err) {
-        toast.error(err.response ? formatApiErrorDetail(err.response.data?.detail) : "Server unreachable — please try again");
+        const msg = err.noResponse || !err.response
+          ? "Server is starting up — please wait a moment and try again"
+          : formatApiErrorDetail(err.response.data?.detail);
+        toast.error(msg);
       } finally {
         setSubmitting(false);
+        setWaking(false);
       }
       return;
     }
@@ -185,25 +204,26 @@ export default function InwardForm() {
 
     setSubmitting(true);
     try {
-      pingBackend();
-      const { data } = await withRetry(() =>
-        api.post("/devices", {
-          device_type: deviceType, brand, model,
-          serial_number: serialNumber.trim() || null,
-          condition, category,
-          customer_name: customerName,
-          customer_phone: customerPhone,
-          customer_email: customerEmail,
-          issue_categories: selectedIssues,
-          issue_description: issueNotes,
-        })
-      );
+      const { data } = await saveInward({
+        device_type: deviceType, brand, model,
+        serial_number: serialNumber.trim() || null,
+        condition, category,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        customer_email: customerEmail,
+        issue_categories: selectedIssues,
+        issue_description: issueNotes,
+      });
       toast.success(`Inward logged · ${data.job_number}`);
       navigate(`/devices/${data.device_id}`);
     } catch (err) {
-      toast.error(err.response ? formatApiErrorDetail(err.response.data?.detail) : "Server unreachable — please try again");
+      const msg = err.noResponse || !err.response
+        ? "Server is starting up — please wait a moment and try again"
+        : formatApiErrorDetail(err.response.data?.detail);
+      toast.error(msg);
     } finally {
       setSubmitting(false);
+      setWaking(false);
     }
   };
 
@@ -523,7 +543,7 @@ export default function InwardForm() {
             data-testid="submit-inward-button"
             className="rounded-sm bg-zinc-950 hover:bg-zinc-800 h-11 px-6 flex-1 sm:flex-none"
           >
-            {submitting ? "Saving…" : (!serverReady && !existingDeviceId ? "Connecting to server…" : (existingDeviceId ? "Confirm Return" : "Generate Job & Save"))}
+            {submitting ? (waking ? "Connecting to server…" : "Saving…") : (!serverReady && !existingDeviceId ? "Connecting to server…" : (existingDeviceId ? "Confirm Return" : "Generate Job & Save"))}
           </Button>
         </div>
       </form>

@@ -68,16 +68,38 @@ export function pingBackend() {
   fetch(`${API}/`, { method: "GET" }).catch(() => {});
 }
 
+const HEALTH_URL = BACKEND_URL ? `${BACKEND_URL}/health` : null;
+
+/** Poll /health until backend is awake (Render cold start). Resolves when ready or times out. */
+export async function wakeBackend({ maxWaitMs = 90000, intervalMs = 2000 } = {}) {
+  if (!HEALTH_URL) return false;
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(HEALTH_URL, { method: "GET", signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) return true;
+    } catch { /* still waking */ }
+    await new Promise((r) => setTimeout(r, intervalMs));
+    pingBackend();
+  }
+  return false;
+}
+
 /** Retry a request on network errors (no response) — helps with Render cold starts */
-export async function withRetry(fn, { retries = 2, delayMs = 2000 } = {}) {
+export async function withRetry(fn, { retries = 3, delayMs = 2500 } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (err.response || attempt === retries) throw err;
-      await new Promise((r) => setTimeout(r, delayMs));
+      const isNetwork = !err.response;
+      const isTimeout = err.code === "ECONNABORTED";
+      if ((!isNetwork && !isTimeout) || attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
       pingBackend();
     }
   }

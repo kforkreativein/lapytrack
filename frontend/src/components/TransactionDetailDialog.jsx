@@ -1,0 +1,183 @@
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
+import {
+  TrendingUp, TrendingDown, Landmark, Clock, Trash2, IndianRupee,
+} from "lucide-react";
+import { txnRemaining } from "@/components/PaymentMethodPicker";
+import CreditPaymentActions from "@/components/CreditPaymentActions";
+
+function fmtAmount(n) { return Number(n).toLocaleString("en-IN"); }
+
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch { return iso; }
+}
+
+export default function TransactionDetailDialog({
+  txnId,
+  customerName,
+  banks = [],
+  onClose,
+  onUpdated,
+  onDeleted,
+}) {
+  const [txn, setTxn] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!txnId) { setTxn(null); return; }
+    setLoading(true);
+    api.get(`/transactions/${txnId}`)
+      .then(({ data }) => setTxn(data))
+      .catch(() => toast.error("Could not load transaction"))
+      .finally(() => setLoading(false));
+  }, [txnId]);
+
+  const refresh = () => {
+    if (!txnId) return;
+    api.get(`/transactions/${txnId}`)
+      .then(({ data }) => { setTxn(data); onUpdated?.(); })
+      .catch(() => {});
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm("Delete this transaction?")) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/transactions/${txnId}`);
+      toast.success("Transaction deleted");
+      onDeleted?.();
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to delete");
+    } finally { setDeleting(false); }
+  };
+
+  const remaining = txn ? txnRemaining(txn) : 0;
+  const payments = txn?.payments || [];
+  const isCredit = txn?.type === "credit";
+
+  return (
+    <Dialog open={!!txnId} onOpenChange={open => !open && onClose()}>
+      <DialogContent className="rounded-sm max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="font-heading text-lg pr-6">Transaction Details</DialogTitle>
+        </DialogHeader>
+
+        {loading && <div className="py-8 text-center text-sm text-zinc-500">Loading…</div>}
+
+        {!loading && txn && (
+          <div className="space-y-4 -mt-1">
+            {/* Header */}
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-sm ${
+                isCredit ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+              }`}>
+                {isCredit ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-base truncate">{customerName || "—"}</div>
+                <div className="text-xs text-zinc-500 mt-0.5">{txn.category || "Other"} · {fmtDateTime(txn.date)}</div>
+                {txn.note && <div className="text-sm text-zinc-600 mt-1">{txn.note}</div>}
+              </div>
+              <div className={`font-mono text-lg font-bold flex-shrink-0 ${isCredit ? "text-green-700" : "text-red-600"}`}>
+                {isCredit ? "+" : "-"}₹{fmtAmount(txn.amount)}
+              </div>
+            </div>
+
+            {/* Status */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="border border-zinc-200 rounded-sm p-2.5">
+                <div className="kpi-label text-[9px]">Type</div>
+                <div className="font-medium mt-0.5">{isCredit ? "You Got" : "You Gave"}</div>
+              </div>
+              <div className="border border-zinc-200 rounded-sm p-2.5">
+                <div className="kpi-label text-[9px]">Payment</div>
+                <div className="font-medium mt-0.5 flex items-center gap-1">
+                  <Landmark className="w-3 h-3 text-zinc-400" />
+                  {txn.payment_method || "Cash"}
+                </div>
+              </div>
+            </div>
+
+            {txn.on_credit && (
+              <div className={`rounded-sm border px-3 py-2.5 text-sm ${
+                remaining > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-green-200 bg-green-50 text-green-800"
+              }`}>
+                <div className="flex items-center gap-1.5 font-semibold text-xs uppercase tracking-wide">
+                  <Clock className="w-3.5 h-3.5" />
+                  {remaining > 0 ? "On Credit" : "Fully Paid"}
+                </div>
+                <div className="mt-1 tabular-nums">
+                  Paid ₹{fmtAmount(txn.amount_paid || 0)} of ₹{fmtAmount(txn.amount)}
+                  {remaining > 0 && <span className="font-semibold"> · ₹{fmtAmount(remaining)} due</span>}
+                </div>
+              </div>
+            )}
+
+            {/* Payment history */}
+            {txn.on_credit && payments.length > 0 && (
+              <div>
+                <div className="kpi-label mb-2">Payment History</div>
+                <ul className="border border-zinc-200 divide-y divide-zinc-200 rounded-sm">
+                  {payments.map((p, i) => (
+                    <li key={p.id || i} className="flex items-center justify-between px-3 py-2.5 text-sm gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-green-700 flex items-center gap-1">
+                          <IndianRupee className="w-3 h-3" />
+                          {fmtAmount(p.amount)}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-1 flex-wrap">
+                          <span>{fmtDateTime(p.date)}</span>
+                          {p.payment_method && (
+                            <span className="inline-flex items-center gap-0.5 bg-zinc-100 px-1.5 py-0.5 rounded-sm">
+                              <Landmark className="w-2.5 h-2.5" />{p.payment_method}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-zinc-400 flex-shrink-0">#{i + 1}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {txn.on_credit && remaining > 0 && (
+              <div className="flex flex-wrap gap-2">
+                <CreditPaymentActions
+                  txn={txn}
+                  banks={banks}
+                  onUpdated={refresh}
+                  showUndo={txn.type === "debit"}
+                />
+              </div>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deleting}
+              onClick={handleDelete}
+              className="w-full rounded-sm h-10 border-red-300 text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+              {deleting ? "Deleting…" : "Delete Transaction"}
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}

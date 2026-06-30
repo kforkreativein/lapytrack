@@ -850,23 +850,38 @@ class ReminderCreate(BaseModel):
 @api_router.get("/customers")
 async def list_customers(user: dict = Depends(get_current_user)):
     customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(2000)
-    txns = await db.transactions.find(scoped_filter(user), {"_id": 0}).to_list(50000)
+    agg = await db.transactions.aggregate([
+        {"$match": scoped_filter(user, {"customer_id": {"$ne": None}})},
+        {"$project": {
+            "customer_id": 1,
+            "type": 1,
+            "contrib": {
+                "$cond": [
+                    {"$eq": [{"$ifNull": ["$on_credit", False]}, True]},
+                    {"$max": [0, {"$subtract": [
+                        {"$ifNull": ["$amount", 0]},
+                        {"$ifNull": ["$amount_paid", 0]},
+                    ]}]},
+                    {"$ifNull": ["$amount", 0]},
+                ]
+            },
+        }},
+        {"$group": {
+            "_id": {"customer_id": "$customer_id", "type": "$type"},
+            "total": {"$sum": "$contrib"},
+        }},
+    ]).to_list(10000)
     by_customer: dict = {}
-    for t in txns:
-        cid = t.get("customer_id")
-        if not cid:
-            continue
-        by_customer.setdefault(cid, {"credit": 0.0, "debit": 0.0, "balance": 0.0})
-        contrib = txn_balance_contribution(t)
-        if contrib >= 0:
-            by_customer[cid]["credit"] += contrib
-        else:
-            by_customer[cid]["debit"] += abs(contrib)
-        by_customer[cid]["balance"] += contrib
+    for row in agg:
+        cid = row["_id"]["customer_id"]
+        typ = row["_id"]["type"]
+        by_customer.setdefault(cid, {"credit": 0.0, "debit": 0.0})
+        by_customer[cid][typ] = float(row.get("total") or 0)
     out = []
     for c in customers:
-        totals = by_customer.get(c["id"], {"credit": 0.0, "debit": 0.0, "balance": 0.0})
-        c["balance"] = round(totals["balance"], 2)
+        totals = by_customer.get(c["id"], {"credit": 0.0, "debit": 0.0})
+        balance = round(totals["credit"] - totals["debit"], 2)
+        c["balance"] = balance
         c["total_credit"] = round(totals["credit"], 2)
         c["total_debit"] = round(totals["debit"], 2)
         out.append(c)
@@ -954,6 +969,13 @@ async def list_transactions(customer_id: Optional[str] = None, type: Optional[st
         if start: q["date"] = {"$gte": start}
     safe_limit = max(1, min(limit, 1000))
     return await db.transactions.find(scoped_filter(user, q), {"_id": 0}).sort("date", -1).to_list(safe_limit)
+
+@api_router.get("/transactions/{txn_id}")
+async def get_transaction(txn_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.transactions.find_one(scoped_filter(user, {"id": txn_id}), {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Transaction not found")
+    return doc
 
 @api_router.post("/customers/import-file")
 async def import_contacts_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
