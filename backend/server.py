@@ -1292,6 +1292,206 @@ async def reports_summary(period: str = "monthly",
             "net": round(total_credit - total_debit, 2), "series": series,
             "by_category": list(cat_map.values())}
 
+@api_router.get("/reports/advanced")
+async def reports_advanced(period: str = "monthly", start_date: Optional[str] = None,
+                           end_date: Optional[str] = None, user: dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    if start_date:
+        start = datetime.fromisoformat(start_date.replace("Z", "+00:00") if start_date.endswith("Z") else start_date)
+        if start.tzinfo is None: start = start.replace(tzinfo=timezone.utc)
+    else:
+        if period == "daily": start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == "weekly": start = now - timedelta(days=7)
+        elif period == "yearly": start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else: start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    period_txns = await db.transactions.find(scoped_filter(user, {"date": {"$gte": start.isoformat()}}), {"_id": 0}).to_list(5000)
+
+    # ── Monthly trend (last 6 calendar months) ───────────────────────────────
+    six_ago = (now.replace(day=1) - timedelta(days=150)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    trend_txns = await db.transactions.find(scoped_filter(user, {"date": {"$gte": six_ago.isoformat()}}), {"_id": 0}).to_list(10000)
+    monthly: dict = {}
+    for t in trend_txns:
+        try:
+            raw = t.get("date", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            key = dt.strftime("%b %Y")
+            sort_key = dt.strftime("%Y%m")
+            if key not in monthly: monthly[key] = {"month": key, "credit": 0.0, "debit": 0.0, "sort": sort_key}
+            amt = float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+            monthly[key][t["type"]] += amt
+        except: pass
+    trend = sorted(monthly.values(), key=lambda x: x["sort"])[-6:]
+    for m in trend: del m["sort"]
+
+    # ── Payment method breakdown ──────────────────────────────────────────────
+    pay_map: dict = {}
+    for t in period_txns:
+        pm = (t.get("payment_method") or "Other").strip()
+        if pm not in pay_map: pay_map[pm] = {"method": pm, "total": 0.0, "count": 0}
+        amt = float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+        pay_map[pm]["total"] = round(pay_map[pm]["total"] + amt, 2)
+        pay_map[pm]["count"] += 1
+    payment_methods = sorted(pay_map.values(), key=lambda x: -x["total"])
+
+    # ── Credit sales tracker ──────────────────────────────────────────────────
+    credit_on_credit = [t for t in period_txns if t.get("on_credit") and t.get("type") == "credit"]
+    total_on_credit = sum(float(t.get("amount") or 0) for t in credit_on_credit)
+    total_collected = sum(float(t.get("amount_paid") or 0) for t in credit_on_credit)
+
+    # ── Devices in period ─────────────────────────────────────────────────────
+    devices = await db.devices.find(
+        scoped_filter(user, {"created_at": {"$gte": start.isoformat()}}),
+        {"_id": 0, "status": 1, "repair_status": 1, "inward_date": 1, "outward_date": 1, "issue_categories": 1, "created_at": 1}
+    ).to_list(2000)
+    dev_received = len(devices)
+    dev_completed = len([d for d in devices if d.get("repair_status") in ("completed", "delivered")])
+    dev_delivered = len([d for d in devices if d.get("status") == "issued" or d.get("repair_status") == "delivered"])
+    dev_pending = len([d for d in devices if d.get("status") == "in_repair" and d.get("repair_status") not in ("completed", "delivered")])
+
+    # ── Avg repair turnaround ─────────────────────────────────────────────────
+    turnarounds = []
+    for d in devices:
+        try:
+            if not d.get("outward_date") or not d.get("inward_date"): continue
+            inw_raw, outw_raw = d["inward_date"], d["outward_date"]
+            inw = datetime.fromisoformat(inw_raw.replace("Z", "+00:00") if inw_raw.endswith("Z") else inw_raw)
+            outw = datetime.fromisoformat(outw_raw.replace("Z", "+00:00") if outw_raw.endswith("Z") else outw_raw)
+            days = (outw - inw).days
+            if 0 <= days <= 365: turnarounds.append(days)
+        except: pass
+    avg_turnaround = round(sum(turnarounds) / len(turnarounds), 1) if turnarounds else None
+
+    # ── Top issue categories ──────────────────────────────────────────────────
+    issue_map: dict = {}
+    for d in devices:
+        for issue in (d.get("issue_categories") or []):
+            issue_map[issue] = issue_map.get(issue, 0) + 1
+    top_issues = [{"issue": k, "count": v} for k, v in sorted(issue_map.items(), key=lambda x: -x[1])[:10]]
+
+    # ── Busiest days of week ──────────────────────────────────────────────────
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    day_map = {d: {"day": d, "transactions": 0, "amount": 0.0} for d in day_names}
+    for t in period_txns:
+        try:
+            raw = t.get("date", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            day = day_names[dt.weekday()]
+            day_map[day]["transactions"] += 1
+            if t.get("type") == "credit":
+                amt = float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+                day_map[day]["amount"] = round(day_map[day]["amount"] + amt, 2)
+        except: pass
+
+    # ── Outstanding balances ──────────────────────────────────────────────────
+    custs = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1, "balance": 1}).to_list(10000)
+    to_receive = sorted([{"name": c["name"], "phone": c.get("phone"), "amount": round(float(c.get("balance") or 0), 2)} for c in custs if (c.get("balance") or 0) > 0], key=lambda x: -x["amount"])
+    to_pay = sorted([{"name": c["name"], "phone": c.get("phone"), "amount": round(abs(float(c.get("balance") or 0)), 2)} for c in custs if (c.get("balance") or 0) < 0], key=lambda x: -x["amount"])
+
+    # ── Top customers by revenue (period) ────────────────────────────────────
+    cust_revenue: dict = {}
+    for t in period_txns:
+        if not t.get("customer_id"): continue
+        cid = t["customer_id"]
+        if cid not in cust_revenue: cust_revenue[cid] = {"customer_id": cid, "amount": 0.0, "transactions": 0}
+        if t.get("type") == "credit":
+            amt = float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+            cust_revenue[cid]["amount"] = round(cust_revenue[cid]["amount"] + amt, 2)
+            cust_revenue[cid]["transactions"] += 1
+    if cust_revenue:
+        cust_docs = await db.customers.find(
+            scoped_filter(user, {"id": {"$in": list(cust_revenue.keys())}}),
+            {"_id": 0, "id": 1, "name": 1, "phone": 1}
+        ).to_list(200)
+        cust_by_id = {c["id"]: c for c in cust_docs}
+        top_customers = sorted([
+            {"name": cust_by_id.get(k, {}).get("name", "Unknown"), "phone": cust_by_id.get(k, {}).get("phone"),
+             "amount": v["amount"], "transactions": v["transactions"]}
+            for k, v in cust_revenue.items() if k in cust_by_id
+        ], key=lambda x: -x["amount"])[:10]
+    else:
+        top_customers = []
+
+    # ── Cash flow calendar (last 90 days credit) ──────────────────────────────
+    ninety_ago = now - timedelta(days=89)
+    cal_txns = await db.transactions.find(
+        scoped_filter(user, {"date": {"$gte": ninety_ago.isoformat()}, "type": "credit"}),
+        {"_id": 0, "date": 1, "amount": 1, "amount_paid": 1, "on_credit": 1}
+    ).to_list(5000)
+    cal_map: dict = {}
+    for t in cal_txns:
+        try:
+            raw = t.get("date", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            day = dt.strftime("%Y-%m-%d")
+            amt = float(t.get("amount_paid") or 0) if t.get("on_credit") else float(t.get("amount") or 0)
+            cal_map[day] = round(cal_map.get(day, 0) + amt, 2)
+        except: pass
+    cash_flow_calendar = [{"date": k, "amount": v} for k, v in sorted(cal_map.items())]
+
+    # ── Brand popularity (all-time) ───────────────────────────────────────────
+    all_devices_brands = await db.devices.find(scoped_filter(user), {"_id": 0, "brand": 1}).to_list(10000)
+    brand_map: dict = {}
+    for d in all_devices_brands:
+        b = (d.get("brand") or "Unknown").strip()
+        brand_map[b] = brand_map.get(b, 0) + 1
+    brand_popularity = sorted([{"brand": k, "count": v} for k, v in brand_map.items()], key=lambda x: -x["count"])[:10]
+
+    # ── Repeat customers ──────────────────────────────────────────────────────
+    all_dev_phones = await db.devices.find(scoped_filter(user), {"_id": 0, "customer_phone": 1, "customer_name": 1}).to_list(10000)
+    phone_map: dict = {}
+    for d in all_dev_phones:
+        key = (d.get("customer_phone") or "").strip() or (d.get("customer_name") or "Unknown")
+        if key not in phone_map:
+            phone_map[key] = {"name": d.get("customer_name", "Unknown"), "phone": d.get("customer_phone"), "visits": 0}
+        phone_map[key]["visits"] += 1
+    repeat_list = sorted([v for v in phone_map.values() if v["visits"] > 1], key=lambda x: -x["visits"])[:10]
+    repeat_customers = {
+        "total_unique": len(phone_map),
+        "repeat_count": len([v for v in phone_map.values() if v["visits"] > 1]),
+        "top_repeat": repeat_list,
+    }
+
+    # ── Pending delivery (repair done, not picked up) ─────────────────────────
+    pending_del = await db.devices.find(
+        scoped_filter(user, {"status": "in_repair", "repair_status": "completed"}),
+        {"_id": 0, "brand": 1, "model": 1, "job_number": 1, "device_id": 1,
+         "customer_name": 1, "customer_phone": 1, "inward_date": 1, "created_at": 1}
+    ).to_list(100)
+    for d in pending_del:
+        try:
+            raw = d.get("inward_date") or d.get("created_at", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            d["days_waiting"] = (now - dt).days
+        except: d["days_waiting"] = 0
+
+    return {
+        "monthly_trend": trend,
+        "payment_methods": payment_methods,
+        "credit_sales": {
+            "total_on_credit": round(total_on_credit, 2),
+            "total_collected": round(total_collected, 2),
+            "total_pending": round(total_on_credit - total_collected, 2),
+        },
+        "devices": {
+            "received": dev_received, "completed": dev_completed,
+            "delivered": dev_delivered, "pending": dev_pending,
+            "avg_turnaround_days": avg_turnaround,
+        },
+        "top_issues": top_issues,
+        "busiest_days": list(day_map.values()),
+        "outstanding": {
+            "to_receive": to_receive[:10], "to_pay": to_pay[:10],
+            "total_receive": round(sum(x["amount"] for x in to_receive), 2),
+            "total_pay": round(sum(x["amount"] for x in to_pay), 2),
+        },
+        "top_customers": top_customers,
+        "cash_flow_calendar": cash_flow_calendar,
+        "brand_popularity": brand_popularity,
+        "repeat_customers": repeat_customers,
+        "pending_delivery": pending_del,
+    }
+
 # ── Combined Dashboard ────────────────────────────────────────────────────────
 @api_router.get("/ledger/dashboard")
 async def ledger_dashboard(user: dict = Depends(get_current_user)):

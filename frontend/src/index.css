@@ -129,3 +129,10 @@ html {
         display: contents !important;
     }
 }
+
+@media print {
+    aside, nav, footer { display: none !important; }
+    body { background: white !important; }
+    .mobile-page { padding: 0 !important; max-width: 100% !important; }
+    .border { break-inside: avoid; }
+}
