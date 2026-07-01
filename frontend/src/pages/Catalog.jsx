@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -289,9 +290,20 @@ export default function Catalog() {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setImportResult(data);
-      toast.success(`Imported ${data.added} contacts (${data.skipped} skipped as duplicates)`);
+      if (data.added > 0) {
+        toast.success(`Added ${data.added} new contacts${data.skipped > 0 ? ` · ${data.skipped} already existed` : ""}`);
+      } else {
+        toast.info(`No new contacts added — all ${data.total} already exist in your list`);
+      }
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Import failed");
+      const detail = err.response?.data?.detail;
+      const status = err.response?.status;
+      const msg = detail
+        ? `Import failed: ${detail}`
+        : status === 413 ? "File too large — max 5 MB"
+        : status === 400 ? "Unsupported file format"
+        : `Import failed (${status || "network error"})`;
+      toast.error(msg);
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -332,6 +344,14 @@ export default function Catalog() {
         <p className="text-xs text-zinc-400 mt-2">
           iPhone: Contacts app → select all → Share → Export vCard (.vcf)
         </p>
+        <div className="mt-3 pt-3 border-t border-zinc-100">
+          <Link to="/customers">
+            <Button variant="outline" className="w-full rounded-sm border-zinc-300 h-10 text-sm justify-between">
+              <span className="flex items-center gap-2"><Users className="w-4 h-4 text-zinc-400" /> View &amp; Manage All Contacts</span>
+              <ChevronRight className="w-4 h-4 text-zinc-400" />
+            </Button>
+          </Link>
+        </div>
       </Section>
 
       {/* ── Payment Methods / Banks ── */}

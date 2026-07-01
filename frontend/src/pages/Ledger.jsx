@@ -421,7 +421,12 @@ export default function Ledger() {
     }
   };
 
-  const filtered = customers.filter(c =>
+  // Only show customers with outstanding balance when not searching.
+  // When searching, include all customers so you can find VCF-imported contacts.
+  const activeCustomers = q
+    ? customers
+    : customers.filter(c => (c.balance || 0) !== 0);
+  const filtered = activeCustomers.filter(c =>
     c.name.toLowerCase().includes(q.toLowerCase()) ||
     (c.phone || "").includes(q)
   );
@@ -709,6 +714,11 @@ export default function Ledger() {
               </li>
             ))}
           </ul>
+        )}
+        {!q && customers.length > activeCustomers.length && (
+          <div className="px-4 py-3 border-t border-zinc-100 text-xs text-zinc-400 text-center">
+            {customers.length - activeCustomers.length} contacts with no balance hidden · Search by name to find them
+          </div>
         )}
       </div>
 

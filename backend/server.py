@@ -1006,18 +1006,28 @@ async def import_contacts_file(file: UploadFile = File(...), user: dict = Depend
     contacts = []
 
     if filename.endswith(".vcf") or filename.endswith(".vcard"):
-        for card in text.split("BEGIN:VCARD"):
+        # Unfold RFC 2425 continuation lines (lines starting with space/tab)
+        unfolded = re.sub(r"\r?\n[ \t]", "", text)
+        for card in re.split(r"BEGIN:VCARD", unfolded, flags=re.I):
             if not card.strip(): continue
             name = phone = None
             for line in card.splitlines():
                 line = line.strip()
-                if line.upper().startswith("FN:"):
-                    name = line[3:].strip()
-                elif re.match(r"TEL", line, re.I) and ":" in line:
-                    raw = line.split(":")[-1].strip()
+                if not line: continue
+                # FN field (may have params like FN;CHARSET=UTF-8:)
+                m = re.match(r"FN(?:;[^:]*)?:(.*)", line, re.I)
+                if m and not name:
+                    name = m.group(1).strip()
+                    continue
+                # TEL field — take first number found
+                m = re.match(r"TEL(?:;[^:]*)?:(.*)", line, re.I)
+                if m and not phone:
+                    raw = m.group(1).strip()
+                    # Handle tel: URI scheme (VCF 4.0)
+                    raw = re.sub(r"^tel:", "", raw, flags=re.I)
                     phone = re.sub(r"[^\d+]", "", raw) or None
-            if name:
-                contacts.append({"name": name, "phone": phone})
+            if name and name.strip():
+                contacts.append({"name": name.strip(), "phone": phone})
     elif filename.endswith(".csv"):
         reader = csv.DictReader(io.StringIO(text))
         for row in reader:
@@ -1033,15 +1043,15 @@ async def import_contacts_file(file: UploadFile = File(...), user: dict = Depend
     else:
         raise HTTPException(400, "Unsupported file. Upload a .csv or .vcf file")
 
-    existing = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1}).to_list(5000)
-    keys = {(c.get("name","").lower().strip(), re.sub(r"[\s\-]","", c.get("phone") or "")) for c in existing}
+    existing = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1}).to_list(10000)
+    # Deduplicate by name (case-insensitive). Phone can differ across imports.
+    existing_names = {c.get("name","").lower().strip() for c in existing}
     added = 0
     for item in contacts:
         name = item["name"].strip()
         if not name: continue
-        phone_clean = re.sub(r"[\s\-]", "", item.get("phone") or "")
-        if (name.lower(), phone_clean) in keys: continue
-        keys.add((name.lower(), phone_clean))
+        if name.lower() in existing_names: continue
+        existing_names.add(name.lower())
         await db.customers.insert_one(with_shop(user, {"id": str(uuid.uuid4()), "name": name,
             "phone": item.get("phone"), "note": None, "avatar_color": "#E5E7EB", "created_at": now_iso()}))
         added += 1

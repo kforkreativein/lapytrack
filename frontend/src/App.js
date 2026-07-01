@@ -12,6 +12,7 @@ import CustomerDetail from "@/pages/CustomerDetail";
 import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
 import Catalog from "@/pages/Catalog";
+import CustomerList from "@/pages/CustomerList";
 import PublicJobCard from "@/pages/PublicJobCard";
 import Layout from "@/components/Layout";
 import PinOverlay from "@/components/PinOverlay";
@@ -80,6 +81,7 @@ function App() {
               <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/catalog" element={<ProtectedRoute><Catalog /></ProtectedRoute>} />
+              <Route path="/customers" element={<ProtectedRoute><CustomerList /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
             <Toaster position="bottom-right" richColors closeButton />

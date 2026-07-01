@@ -111,6 +111,7 @@ export default function TransactionDetailDialog({
   const typeCategories = categories.filter(c => c.type === form?.type || c.type === "both");
 
   return (
+    <>
     <Dialog open={!!txnId} onOpenChange={open => !open && onClose()}>
       <DialogContent className="rounded-sm max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
@@ -297,5 +298,6 @@ export default function TransactionDetailDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    </>
   );
 }
