@@ -962,6 +962,20 @@ async def export_customers_csv(request: Request, user: dict = Depends(get_curren
     return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="contacts.csv"'})
 
+@api_router.get("/customers/outstanding/csv")
+async def export_outstanding_csv(user: dict = Depends(get_current_user)):
+    customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(10000)
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Name", "Phone", "Amount", "Type"])
+    for c in customers:
+        balance = c.get("balance", 0) or 0
+        if balance == 0: continue
+        type_label = "Receivable (You'll Get)" if balance > 0 else "Payable (You'll Give)"
+        w.writerow([c.get("name",""), c.get("phone",""), abs(balance), type_label])
+    return StreamingResponse(iter([out.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="outstanding.csv"'})
+
 # ── Ledger: Transactions ──────────────────────────────────────────────────────
 @api_router.get("/transactions")
 async def list_transactions(customer_id: Optional[str] = None, type: Optional[str] = None,
@@ -1044,14 +1058,18 @@ async def import_contacts_file(file: UploadFile = File(...), user: dict = Depend
         raise HTTPException(400, "Unsupported file. Upload a .csv or .vcf file")
 
     existing = await db.customers.find(scoped_filter(user), {"_id": 0, "name": 1, "phone": 1}).to_list(10000)
-    # Deduplicate by name (case-insensitive). Phone can differ across imports.
+    # Deduplicate by name OR phone — preserves manually-added contacts
     existing_names = {c.get("name","").lower().strip() for c in existing}
+    existing_phones = {(c.get("phone") or "").replace(" ","").replace("-","") for c in existing if c.get("phone")}
     added = 0
     for item in contacts:
         name = item["name"].strip()
         if not name: continue
+        norm_phone = (item.get("phone") or "").replace(" ","").replace("-","")
         if name.lower() in existing_names: continue
+        if norm_phone and norm_phone in existing_phones: continue
         existing_names.add(name.lower())
+        if norm_phone: existing_phones.add(norm_phone)
         await db.customers.insert_one(with_shop(user, {"id": str(uuid.uuid4()), "name": name,
             "phone": item.get("phone"), "note": None, "avatar_color": "#E5E7EB", "created_at": now_iso()}))
         added += 1
@@ -1536,6 +1554,7 @@ class ModelAdd(BaseModel):
 
 class IssueCategoryCreate(BaseModel):
     name: str
+    default_cost: Optional[float] = None
 
 @api_router.get("/catalog/brands")
 async def get_brands(user: dict = Depends(get_current_user)):
@@ -1576,16 +1595,35 @@ async def get_issue_categories(user: dict = Depends(get_current_user)):
 async def add_issue_category(body: IssueCategoryCreate, user: dict = Depends(get_current_user)):
     if await db.issue_categories.find_one(scoped_filter(user, {"name": body.name})):
         raise HTTPException(400, "Category already exists")
-    doc = {"category_id": str(uuid.uuid4()), "name": body.name.strip()}
+    doc = {"category_id": str(uuid.uuid4()), "name": body.name.strip(), "default_cost": body.default_cost}
     await db.issue_categories.insert_one(with_shop(user, doc))
     doc.pop("_id", None)
     return doc
+
+@api_router.put("/catalog/issue-categories/{category_id}")
+async def update_issue_category(category_id: str, body: IssueCategoryCreate, user: dict = Depends(get_current_user)):
+    r = await db.issue_categories.update_one(
+        scoped_filter(user, {"category_id": category_id}),
+        {"$set": {"name": body.name.strip(), "default_cost": body.default_cost}}
+    )
+    if r.matched_count == 0: raise HTTPException(404, "Category not found")
+    return await db.issue_categories.find_one(scoped_filter(user, {"category_id": category_id}), {"_id": 0})
 
 @api_router.delete("/catalog/issue-categories/{category_id}")
 async def delete_issue_category(category_id: str, user: dict = Depends(get_current_user)):
     r = await db.issue_categories.delete_one(scoped_filter(user, {"category_id": category_id}))
     if r.deleted_count == 0: raise HTTPException(404, "Category not found")
     return {"ok": True}
+
+@api_router.get("/customers/{customer_id}/last-device")
+async def get_customer_last_device(customer_id: str, user: dict = Depends(get_current_user)):
+    cust = await db.customers.find_one(scoped_filter(user, {"id": customer_id}), {"_id": 0, "phone": 1})
+    if not cust or not cust.get("phone"): return None
+    devices = await db.devices.find(
+        scoped_filter(user, {"customer_phone": cust["phone"]}),
+        {"_id": 0, "brand": 1, "model": 1, "device_type": 1, "job_number": 1}
+    ).sort("created_at", -1).limit(1).to_list(1)
+    return devices[0] if devices else None
 
 class BankCreate(BaseModel):
     name: str

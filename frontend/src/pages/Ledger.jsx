@@ -412,6 +412,8 @@ export default function Ledger() {
     try {
       if (exportTarget === "contacts") {
         await downloadCsv("/customers/export/csv", "contacts.csv");
+      } else if (exportTarget === "outstanding") {
+        await downloadCsv("/customers/outstanding/csv", "outstanding.csv");
       } else {
         await downloadCsv(`/transactions/export/csv${params}`, "ledger.csv");
       }
@@ -447,13 +449,17 @@ export default function Ledger() {
           <h1 className="font-heading text-2xl md:text-4xl font-bold tracking-tight mt-1">Khata Book</h1>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:w-auto">
-          <Button variant="outline" onClick={() => setExportTarget("contacts")}
+          <Button variant="outline" onClick={() => downloadCsv("/customers/export/csv", "contacts.csv").catch(e => toast.error(e.message))}
             className="w-full sm:w-auto rounded-sm border-zinc-300 h-10 text-xs">
             <Download className="w-3.5 h-3.5 mr-1.5" /> Contacts CSV
           </Button>
           <Button variant="outline" onClick={() => { setExportPeriod("all"); setExportTarget("ledger"); }}
             className="w-full sm:w-auto rounded-sm border-zinc-300 h-10 text-xs">
             <Download className="w-3.5 h-3.5 mr-1.5" /> Ledger CSV
+          </Button>
+          <Button variant="outline" onClick={() => downloadCsv("/customers/outstanding/csv", "outstanding.csv").catch(e => toast.error(e.message))}
+            className="w-full sm:w-auto rounded-sm border-amber-300 text-amber-700 h-10 text-xs hover:bg-amber-50">
+            <Download className="w-3.5 h-3.5 mr-1.5" /> Outstanding CSV
           </Button>
           <Button variant="outline" onClick={() => setShowAddContact(true)}
             className="w-full sm:w-auto rounded-sm border-zinc-300 h-10">
@@ -581,7 +587,11 @@ export default function Ledger() {
           </div>
         </div>
         {(() => {
-          const visibleTxns = txnFilter === "all" ? transactions : transactions.filter(t => t.type === txnFilter);
+          const matchingIds = q ? new Set(customers.filter(c =>
+            c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q)
+          ).map(c => c.id)) : null;
+          const visibleTxns = (txnFilter === "all" ? transactions : transactions.filter(t => t.type === txnFilter))
+            .filter(t => !matchingIds || matchingIds.has(t.customer_id));
           return visibleTxns.length === 0 ? (
             <div className="p-6 text-sm text-zinc-500 text-center">
               {transactions.length === 0 ? "No transactions for this date" : `No ${txnFilter} transactions for this date`}

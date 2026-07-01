@@ -190,8 +190,9 @@ export default function Devices() {
                       <span className="font-mono text-[11px] font-bold bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded-sm">
                         {d.job_number || d.serial_number}
                       </span>
-                      <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
-                      <RepairStatusChip status={d.repair_status} />
+                      {d.status === "in_repair" && d.repair_status && d.repair_status !== "not_started"
+                        ? <RepairStatusChip status={d.repair_status} />
+                        : <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />}
                     </div>
                     <div className="font-semibold text-sm mt-1.5 break-words">
                       {d.brand} {d.model}
@@ -268,10 +269,9 @@ export default function Devices() {
                     <td className="px-4 py-3 text-xs text-zinc-600 font-mono whitespace-nowrap">{formatShortDate(d.inward_date || d.created_at)}</td>
                     <td className="px-4 py-3 text-xs text-zinc-600 font-mono whitespace-nowrap">{formatShortDate(d.outward_date)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />
-                        <RepairStatusChip status={d.repair_status} />
-                      </div>
+                      {d.status === "in_repair" && d.repair_status && d.repair_status !== "not_started"
+                        ? <RepairStatusChip status={d.repair_status} />
+                        : <StatusBadge status={d.status} expectedReturnDate={d.expected_return_date} />}
                     </td>
                     <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                       <button type="button" onClick={() => window.open(`/job/${d.device_id}`, "_blank", "noopener")}

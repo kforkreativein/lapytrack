@@ -53,6 +53,8 @@ export default function InwardForm() {
   const [customers, setCustomers] = useState([]);
   const [customerSuggestions, setCustomerSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestedDevice, setSuggestedDevice] = useState(null); // { brand, model, device_type }
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
 
   // Server readiness (blocks submit while Render is cold-starting)
   const [serverReady, setServerReady] = useState(false);
@@ -119,9 +121,16 @@ export default function InwardForm() {
   };
 
   const toggleIssue = (name) => {
-    setSelectedIssues(prev =>
-      prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name]
-    );
+    setSelectedIssues(prev => {
+      const next = prev.includes(name) ? prev.filter(x => x !== name) : [...prev, name];
+      // Auto-fill repair cost = sum of selected categories with default_cost
+      const total = next.reduce((s, issueName) => {
+        const cat = issueCategories.find(c => c.name === issueName);
+        return s + (cat?.default_cost || 0);
+      }, 0);
+      if (total > 0) setRepairCost(String(total));
+      return next;
+    });
   };
 
   const handleCustomerNameChange = (val) => {
@@ -143,6 +152,38 @@ export default function InwardForm() {
     setCustomerPhone(c.phone || "");
     setCustomerEmail(c.email || "");
     setShowSuggestions(false);
+    setSelectedCustomerId(c.id || null);
+    setSuggestedDevice(null);
+    if (c.id) {
+      api.get(`/customers/${c.id}/last-device`)
+        .then(r => { if (r.data) setSuggestedDevice(r.data); })
+        .catch(() => {});
+    }
+  };
+
+  const applyDeviceSuggestion = () => {
+    if (!suggestedDevice) return;
+    const brandMatch = brands.find(b => b.name.toLowerCase() === (suggestedDevice.brand || "").toLowerCase());
+    if (brandMatch) {
+      handleBrandChange(brandMatch.brand_id);
+      const model = suggestedDevice.model || "";
+      const inList = (brandMatch.models || []).includes(model);
+      if (inList) {
+        setSelectedModel(model);
+        setModelIsOther(false);
+        setModelCustom("");
+      } else {
+        setModelCustom(model);
+        setModelIsOther(false);
+      }
+    } else if (suggestedDevice.brand) {
+      setBrandIsOther(true);
+      setSelectedBrandId("");
+      setBrandModels([]);
+      setBrandCustom(suggestedDevice.brand);
+      setModelCustom(suggestedDevice.model || "");
+    }
+    setSuggestedDevice(null);
   };
 
   const addCustomIssue = () => {
@@ -321,6 +362,27 @@ export default function InwardForm() {
                 </div>
               </div>
             </section>
+
+            {/* ── Device suggestion from contact history ── */}
+            {suggestedDevice && (
+              <div className="border border-blue-200 bg-blue-50 rounded-sm p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-blue-800 mb-0.5">Previously seen device</div>
+                  <div className="text-sm font-medium text-blue-900">{suggestedDevice.brand} {suggestedDevice.model}</div>
+                  <div className="text-xs text-blue-600">{suggestedDevice.device_type}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={applyDeviceSuggestion}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-sm bg-blue-700 text-white hover:bg-blue-800 transition-colors">
+                    Use This
+                  </button>
+                  <button type="button" onClick={() => setSuggestedDevice(null)}
+                    className="text-xs px-3 py-1.5 rounded-sm border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors">
+                    No, Different Device
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* ── Device ── */}
             <section className="border border-zinc-200 bg-white">

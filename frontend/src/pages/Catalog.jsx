@@ -146,8 +146,12 @@ export default function Catalog() {
   const [addingCat, setAddingCat] = useState(false);
   const [addingBank, setAddingBank] = useState(false);
   const [addingLedgerCat, setAddingLedgerCat] = useState(false);
+  const [newLedgerCatType, setNewLedgerCatType] = useState("both");
+  const [newCategoryDefaultCost, setNewCategoryDefaultCost] = useState("");
+  const [editingIssueCat, setEditingIssueCat] = useState(null); // { category_id, name, default_cost }
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [importFileName, setImportFileName] = useState(null);
   const fileRef = useRef();
 
   const load = async () => {
@@ -232,13 +236,29 @@ export default function Catalog() {
     e.preventDefault();
     if (!newCategory.trim()) return;
     setAddingCat(true);
-    try { await api.post("/catalog/issue-categories", { name: newCategory.trim() }); setNewCategory(""); toast.success("Category added"); load(); }
+    try {
+      await api.post("/catalog/issue-categories", {
+        name: newCategory.trim(),
+        default_cost: newCategoryDefaultCost ? parseFloat(newCategoryDefaultCost) : null,
+      });
+      setNewCategory(""); setNewCategoryDefaultCost(""); toast.success("Category added"); load();
+    }
     catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
     finally { setAddingCat(false); }
   };
   const handleDeleteCategory = async (category_id, name) => {
     try { await api.delete(`/catalog/issue-categories/${category_id}`); toast.success(`"${name}" removed`); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+  };
+  const handleSaveIssueCat = async () => {
+    if (!editingIssueCat) return;
+    try {
+      await api.put(`/catalog/issue-categories/${editingIssueCat.category_id}`, {
+        name: editingIssueCat.name,
+        default_cost: editingIssueCat.default_cost ? parseFloat(editingIssueCat.default_cost) : null,
+      });
+      setEditingIssueCat(null); toast.success("Updated"); load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
   };
 
   // ── Bank handlers ─────────────────────────────────────────────────────────
@@ -264,9 +284,13 @@ export default function Catalog() {
     e.preventDefault();
     if (!newLedgerCat.trim()) return;
     setAddingLedgerCat(true);
-    try { await api.post("/categories", { name: newLedgerCat.trim(), type: "both", icon: "", color: "" }); setNewLedgerCat(""); toast.success("Category added"); load(); }
+    try { await api.post("/categories", { name: newLedgerCat.trim(), type: newLedgerCatType, icon: "", color: "" }); setNewLedgerCat(""); setNewLedgerCatType("both"); toast.success("Category added"); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
     finally { setAddingLedgerCat(false); }
+  };
+  const handleRenameLedgerCatWithType = async (id, newName, type) => {
+    try { await api.put(`/categories/${id}`, { name: newName, type: type || "both", icon: "", color: "" }); load(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
   };
   const handleDeleteLedgerCat = async (id, name) => {
     try { await api.delete(`/categories/${id}`); toast.success(`"${name}" removed`); load(); }
@@ -283,6 +307,7 @@ export default function Catalog() {
     if (!file) return;
     setImporting(true);
     setImportResult(null);
+    setImportFileName(file.name);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -322,25 +347,43 @@ export default function Catalog() {
 
       {/* ── Contact Import ── */}
       <Section icon={Users} title="Import Contacts">
-        <div className="border border-dashed border-zinc-300 rounded-sm p-5 text-center mb-3">
-          <Upload className="w-6 h-6 text-zinc-400 mx-auto mb-2" />
-          <p className="text-sm text-zinc-600 mb-1">Upload contacts from your phone</p>
-          <p className="text-xs text-zinc-400 mb-3">
-            Supports <strong>.vcf</strong> (vCard — export from iPhone / Android) and <strong>.csv</strong> (Name, Phone columns)
-          </p>
-          <Button type="button" variant="outline" disabled={importing}
-            onClick={() => fileRef.current?.click()}
-            className="rounded-sm border-zinc-300 h-9 text-sm">
-            {importing ? "Importing…" : "Choose File (.vcf or .csv)"}
-          </Button>
+        <div className="border border-dashed border-zinc-300 rounded-sm p-5 mb-3">
+          {importFileName ? (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4 text-green-600 flex-shrink-0" />
+                  <span className="text-sm font-medium text-zinc-700 truncate">{importFileName}</span>
+                </div>
+                {importResult && (
+                  <div className="text-xs text-zinc-500 mt-1">
+                    Added <strong>{importResult.added}</strong> new contacts
+                    {importResult.skipped > 0 && ` · ${importResult.skipped} already existed`}
+                  </div>
+                )}
+              </div>
+              <Button type="button" variant="outline" disabled={importing}
+                onClick={() => { setImportFileName(null); setImportResult(null); fileRef.current?.click(); }}
+                className="rounded-sm border-zinc-300 h-9 text-xs whitespace-nowrap">
+                {importing ? "Importing…" : "Upload Another File"}
+              </Button>
+            </div>
+          ) : (
+            <div className="text-center">
+              <Upload className="w-6 h-6 text-zinc-400 mx-auto mb-2" />
+              <p className="text-sm text-zinc-600 mb-1">Upload contacts from your phone</p>
+              <p className="text-xs text-zinc-400 mb-3">
+                Supports <strong>.vcf</strong> (vCard — export from iPhone / Android) and <strong>.csv</strong> (Name, Phone columns)
+              </p>
+              <Button type="button" variant="outline" disabled={importing}
+                onClick={() => fileRef.current?.click()}
+                className="rounded-sm border-zinc-300 h-9 text-sm">
+                {importing ? "Importing…" : "Choose File (.vcf or .csv)"}
+              </Button>
+            </div>
+          )}
           <input ref={fileRef} type="file" accept=".vcf,.vcard,.csv" className="hidden" onChange={handleImport} />
         </div>
-        {importResult && (
-          <div className="text-xs text-zinc-600 bg-green-50 border border-green-200 px-3 py-2 rounded-sm">
-            ✓ Added <strong>{importResult.added}</strong> new contacts from {importResult.total} total
-            {importResult.skipped > 0 && ` (${importResult.skipped} already existed)`}
-          </div>
-        )}
         <p className="text-xs text-zinc-400 mt-2">
           iPhone: Contacts app → select all → Share → Export vCard (.vcf)
         </p>
@@ -382,34 +425,58 @@ export default function Catalog() {
       <Section icon={Receipt} title="Ledger Categories">
         <p className="text-xs text-zinc-400 mb-3">Click a name to rename. These appear in Add Entry → Category.</p>
         <div className="flex flex-wrap gap-2 mb-4">
-          {ledgerCategories.map(cat => (
-            <EditableChip key={cat.id} label={cat.name}
-              onDelete={() => handleDeleteLedgerCat(cat.id, cat.name)}
-              onRename={newName => handleRenameLedgerCat(cat.id, newName)} />
-          ))}
+          {ledgerCategories.map(cat => {
+            const typeDot = cat.type === "credit" ? "bg-green-500" : cat.type === "debit" ? "bg-red-500" : "bg-zinc-400";
+            const typeLabel = cat.type === "credit" ? "Income" : cat.type === "debit" ? "Expense" : "Both";
+            return (
+              <div key={cat.id} className="flex items-center gap-1">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${typeDot}`} title={typeLabel} />
+                <EditableChip label={cat.name}
+                  onDelete={() => handleDeleteLedgerCat(cat.id, cat.name)}
+                  onRename={newName => handleRenameLedgerCatWithType(cat.id, newName, cat.type)} />
+              </div>
+            );
+          })}
           {ledgerCategories.length === 0 && (
             <div className="text-sm text-zinc-400 py-4 w-full text-center border border-dashed border-zinc-200 rounded-sm">
               No categories yet
             </div>
           )}
         </div>
-        <form onSubmit={handleAddLedgerCat} className="flex flex-col sm:flex-row gap-2">
-          <Input value={newLedgerCat} onChange={e => setNewLedgerCat(e.target.value)}
-            placeholder="e.g. Advance, Repair, Parts…" className="h-10 rounded-sm border-zinc-300 flex-1" />
-          <Button type="submit" disabled={addingLedgerCat} className="h-10 rounded-sm bg-zinc-950 px-4 sm:w-auto">
-            <Plus className="w-4 h-4 mr-1" />{addingLedgerCat ? "Adding…" : "Add"}
-          </Button>
+        <form onSubmit={handleAddLedgerCat} className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <Input value={newLedgerCat} onChange={e => setNewLedgerCat(e.target.value)}
+              placeholder="e.g. Advance, Repair, Parts…" className="h-10 rounded-sm border-zinc-300 flex-1" />
+            <Button type="submit" disabled={addingLedgerCat} className="h-10 rounded-sm bg-zinc-950 px-4 whitespace-nowrap">
+              <Plus className="w-4 h-4 mr-1" />{addingLedgerCat ? "Adding…" : "Add"}
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            {[["both","Both","bg-zinc-200 text-zinc-700"],["credit","Income","bg-green-100 text-green-800 border-green-300"],["debit","Expense","bg-red-100 text-red-800 border-red-300"]].map(([val,label,cls]) => (
+              <button key={val} type="button" onClick={() => setNewLedgerCatType(val)}
+                className={`flex-1 text-xs font-semibold px-3 py-1.5 rounded-sm border transition-colors ${newLedgerCatType === val ? cls + " ring-2 ring-offset-1 ring-zinc-400" : "bg-white border-zinc-200 text-zinc-500"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
         </form>
       </Section>
 
       {/* ── Issue Categories ── */}
       <Section icon={Tag} title="Issue Categories (Repair)">
-        <p className="text-xs text-zinc-400 mb-3">These appear as chips in the Inward form when registering a device.</p>
+        <p className="text-xs text-zinc-400 mb-3">These appear as chips in the Inward form. Click a chip to set its default cost estimate.</p>
         <div className="flex flex-wrap gap-2 mb-4">
           {issueCategories.map(cat => (
-            <div key={cat.category_id} className="flex items-center gap-1.5 bg-white border border-zinc-200 px-3 py-1.5 rounded-sm text-xs group">
+            <div key={cat.category_id}
+              onClick={() => setEditingIssueCat({ category_id: cat.category_id, name: cat.name, default_cost: cat.default_cost || "" })}
+              className="flex items-center gap-1.5 bg-white border border-zinc-200 px-3 py-1.5 rounded-sm text-xs group cursor-pointer hover:border-zinc-400 transition-colors">
               <span>{cat.name}</span>
-              <button type="button" onClick={() => handleDeleteCategory(cat.category_id, cat.name)}
+              {cat.default_cost ? (
+                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded">
+                  ₹{Number(cat.default_cost).toLocaleString("en-IN")}
+                </span>
+              ) : null}
+              <button type="button" onClick={e => { e.stopPropagation(); handleDeleteCategory(cat.category_id, cat.name); }}
                 className="text-zinc-400 hover:text-red-600 transition-colors ml-1 opacity-0 group-hover:opacity-100">
                 <XIcon className="w-3 h-3" />
               </button>
@@ -421,12 +488,41 @@ export default function Catalog() {
             </div>
           )}
         </div>
-        <form onSubmit={handleAddCategory} className="flex flex-col sm:flex-row gap-2">
-          <Input value={newCategory} onChange={e => setNewCategory(e.target.value)}
-            placeholder="e.g. Screen Crack, Water Damage…" className="h-10 rounded-sm border-zinc-300 flex-1" />
-          <Button type="submit" disabled={addingCat} className="h-10 rounded-sm bg-zinc-950 px-4 sm:w-auto">
-            <Plus className="w-4 h-4 mr-1" />{addingCat ? "Adding…" : "Add"}
-          </Button>
+        {editingIssueCat && (
+          <div className="border border-zinc-200 bg-zinc-50 p-4 rounded-sm mb-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-700">Edit: {editingIssueCat.name}</span>
+              <button type="button" onClick={() => setEditingIssueCat(null)} className="text-zinc-400 hover:text-zinc-700">
+                <XIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div>
+              <label className="kpi-label block mb-1">Default Cost Estimate (₹)</label>
+              <Input
+                type="number" inputMode="decimal" min="0"
+                value={editingIssueCat.default_cost}
+                onChange={e => setEditingIssueCat(p => ({ ...p, default_cost: e.target.value }))}
+                placeholder="Leave blank for no default"
+                className="h-9 rounded-sm border-zinc-300 font-mono"
+              />
+              <p className="text-[11px] text-zinc-400 mt-1">This pre-fills the repair cost in the Inward form — can be changed when taking inward.</p>
+            </div>
+            <Button type="button" onClick={handleSaveIssueCat} className="h-9 rounded-sm bg-zinc-950 text-xs px-4">
+              Save
+            </Button>
+          </div>
+        )}
+        <form onSubmit={handleAddCategory} className="flex flex-col gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input value={newCategory} onChange={e => setNewCategory(e.target.value)}
+              placeholder="e.g. Screen Crack, Water Damage…" className="h-10 rounded-sm border-zinc-300 flex-1" />
+            <Input type="number" inputMode="decimal" min="0"
+              value={newCategoryDefaultCost} onChange={e => setNewCategoryDefaultCost(e.target.value)}
+              placeholder="Cost ₹ (optional)" className="h-10 rounded-sm border-zinc-300 w-full sm:w-36 font-mono" />
+            <Button type="submit" disabled={addingCat} className="h-10 rounded-sm bg-zinc-950 px-4 sm:w-auto whitespace-nowrap">
+              <Plus className="w-4 h-4 mr-1" />{addingCat ? "Adding…" : "Add"}
+            </Button>
+          </div>
         </form>
       </Section>
 
