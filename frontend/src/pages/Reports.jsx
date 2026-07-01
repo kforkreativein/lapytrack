@@ -38,20 +38,20 @@ function localDateBounds(period) {
   return {};
 }
 
-// GitHub-style contribution heatmap
-function CalendarHeatmap({ data }) {
+// GitHub-style contribution heatmap — valueKey="amount" (INR) or "count" (integer)
+// scheme="blue" (revenue) or "green" (inward devices)
+function CalendarHeatmap({ data, valueKey = "amount", scheme = "blue" }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString().slice(0, 10);
 
-  const amountByDate = {};
-  data.forEach(d => { amountByDate[d.date] = d.amount; });
-  const maxAmount = Math.max(...data.map(d => d.amount), 1);
+  const byDate = {};
+  data.forEach(d => { byDate[d.date] = d[valueKey]; });
+  const maxVal = Math.max(...data.map(d => d[valueKey] || 0), 1);
 
-  // Start from 13 weeks back, aligned to Monday
   const start = new Date(today);
   start.setDate(start.getDate() - 90);
-  const dow = (start.getDay() + 6) % 7; // 0=Mon
+  const dow = (start.getDay() + 6) % 7;
   start.setDate(start.getDate() - dow);
 
   const weeks = [];
@@ -61,32 +61,38 @@ function CalendarHeatmap({ data }) {
     const week = [];
     for (let d = 0; d < 7; d++) {
       const ds = cur.toISOString().slice(0, 10);
-      // Track month label at first day of month
-      if (cur.getDate() === 1 || (w === 0 && d === 0)) {
+      if (cur.getDate() === 1 || (w === 0 && d === 0))
         monthLabels.push({ week: w, label: cur.toLocaleDateString("en-IN", { month: "short" }) });
-      }
-      week.push({ date: ds, amount: amountByDate[ds] || 0, future: cur > today, isToday: ds === todayStr });
+      week.push({ date: ds, val: byDate[ds] || 0, future: cur > today, isToday: ds === todayStr });
       cur.setDate(cur.getDate() + 1);
     }
     weeks.push(week);
   }
 
-  const color = (amount, future) => {
+  const B = scheme === "green"
+    ? ["bg-zinc-100","bg-green-100","bg-green-300","bg-green-500","bg-green-700","bg-green-900"]
+    : ["bg-zinc-100","bg-blue-100","bg-blue-300","bg-blue-500","bg-blue-700","bg-blue-900"];
+
+  const color = (val, future) => {
     if (future) return "bg-zinc-50 border border-zinc-100";
-    if (amount === 0) return "bg-zinc-100";
-    const r = amount / maxAmount;
-    if (r < 0.15) return "bg-blue-100";
-    if (r < 0.35) return "bg-blue-300";
-    if (r < 0.6)  return "bg-blue-500";
-    if (r < 0.8)  return "bg-blue-700";
-    return "bg-blue-900";
+    if (val === 0) return B[0];
+    const r = val / maxVal;
+    if (r < 0.15) return B[1];
+    if (r < 0.35) return B[2];
+    if (r < 0.6)  return B[3];
+    if (r < 0.8)  return B[4];
+    return B[5];
+  };
+
+  const tooltip = (day) => {
+    if (!day.val) return day.date;
+    return valueKey === "amount" ? `${day.date}: ${INR(day.val)}` : `${day.date}: ${day.val} device${day.val !== 1 ? "s" : ""}`;
   };
 
   return (
     <div className="overflow-x-auto pb-1">
       <div className="inline-block min-w-full">
-        {/* Month labels */}
-        <div className="flex gap-1 mb-1 pl-0">
+        <div className="flex gap-1 mb-1">
           {weeks.map((_, wi) => {
             const lbl = monthLabels.find(m => m.week === wi);
             return (
@@ -96,25 +102,21 @@ function CalendarHeatmap({ data }) {
             );
           })}
         </div>
-        {/* Grid */}
         <div className="flex gap-1">
           {weeks.map((week, wi) => (
             <div key={wi} className="flex flex-col gap-1">
               {week.map((day, di) => (
                 <div key={di}
-                  className={`w-3.5 h-3.5 rounded-sm cursor-default ${color(day.amount, day.future)} ${day.isToday ? "ring-1 ring-zinc-950 ring-offset-1" : ""}`}
-                  title={`${day.date}${day.amount > 0 ? `: ${INR(day.amount)}` : ""}`}
+                  className={`w-3.5 h-3.5 rounded-sm cursor-default ${color(day.val, day.future)} ${day.isToday ? "ring-1 ring-zinc-950 ring-offset-1" : ""}`}
+                  title={tooltip(day)}
                 />
               ))}
             </div>
           ))}
         </div>
-        {/* Legend */}
         <div className="flex items-center gap-1.5 mt-2 justify-end">
           <span className="text-[9px] text-zinc-400">Less</span>
-          {["bg-zinc-100","bg-blue-100","bg-blue-300","bg-blue-500","bg-blue-700","bg-blue-900"].map((c, i) => (
-            <div key={i} className={`w-3 h-3 rounded-sm ${c}`} />
-          ))}
+          {B.map((c, i) => <div key={i} className={`w-3 h-3 rounded-sm ${c}`} />)}
           <span className="text-[9px] text-zinc-400">More</span>
         </div>
       </div>
@@ -491,20 +493,30 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* ── 11. Cash Flow Calendar ── */}
-          {adv?.cash_flow_calendar?.length > 0 && (
-            <div className="border border-zinc-200 bg-white p-4 md:p-5 mb-6">
-              <div className="kpi-label mb-3">Daily Revenue — Last 90 Days</div>
-              <CalendarHeatmap data={adv.cash_flow_calendar} />
-            </div>
+          {/* ── 11. Cash Flow Calendar + Daily Inward ── */}
+          {(adv?.cash_flow_calendar?.length > 0 || adv?.daily_inward_calendar?.length > 0) && (
+          <div className={`grid grid-cols-1 ${adv?.daily_inward_calendar?.length > 0 && adv?.cash_flow_calendar?.length > 0 ? "md:grid-cols-2" : ""} gap-4 md:gap-6 mb-6`}>
+            {adv?.cash_flow_calendar?.length > 0 && (
+              <div className="border border-zinc-200 bg-white p-4 md:p-5">
+                <div className="kpi-label mb-3">Daily Revenue — Last 90 Days</div>
+                <CalendarHeatmap data={adv.cash_flow_calendar} valueKey="amount" scheme="blue" />
+              </div>
+            )}
+            {adv?.daily_inward_calendar?.length > 0 && (
+              <div className="border border-zinc-200 bg-white p-4 md:p-5">
+                <div className="kpi-label mb-3">Daily Inward Devices — Last 90 Days</div>
+                <CalendarHeatmap data={adv.daily_inward_calendar} valueKey="count" scheme="green" />
+              </div>
+            )}
+          </div>
           )}
 
           {/* ── 12. Top Customers + Brand Popularity ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-6">
-            {adv?.top_customers?.length > 0 && (
-              <SectionBox title="Top Customers by Revenue">
+            {adv?.top_customers?.filter(c => c.amount > 0).length > 0 && (
+              <SectionBox title="Top 10 Customers by Revenue">
                 <ul className="divide-y divide-zinc-200">
-                  {adv.top_customers.map((c, i) => (
+                  {adv.top_customers.filter(c => c.amount > 0).map((c, i) => (
                     <li key={c.name} className="px-4 py-2.5 flex items-center gap-3">
                       <span className="text-xs font-bold text-zinc-400 w-5 text-right flex-shrink-0">#{i + 1}</span>
                       <div className="flex-1 min-w-0">
