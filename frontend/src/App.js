@@ -21,6 +21,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { Toaster } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { Analytics } from "@vercel/analytics/react";
 
 function AuthLoadingScreen() {
   const [slow, setSlow] = useState(false);
@@ -87,6 +88,7 @@ function App() {
             <Toaster position="bottom-right" richColors closeButton />
           </AuthProvider>
         </BrowserRouter>
+        <Analytics />
       </div>
     </ErrorBoundary>
   );
