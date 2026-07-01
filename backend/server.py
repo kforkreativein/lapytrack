@@ -1767,6 +1767,7 @@ def _build_cors_origins():
         'http://localhost:3000',
         'https://lapy-track.vercel.app',
         'https://frontend-kforkreativein-4819s-projects.vercel.app',
+        'https://crm.krishcomputer.com',
     ):
         if url:
             clean = url.rstrip('/')
