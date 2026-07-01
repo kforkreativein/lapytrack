@@ -90,7 +90,11 @@ export default function DeviceDetail() {
           </h1>
           <div className="flex flex-wrap items-center gap-2 md:gap-3 mt-3">
             <span className="font-mono text-sm font-semibold text-zinc-950">{device.serial_number}</span>
-            <StatusBadge status={device.status} expectedReturnDate={device.expected_return_date} />
+            {device.status === "in_repair" && device.repair_status && device.repair_status !== "not_started" ? (() => {
+              const map = { in_progress: ["In Progress", "bg-amber-50 text-amber-700 border-amber-200"], completed: ["Completed", "bg-blue-50 text-blue-700 border-blue-200"], delivered: ["Delivered", "bg-green-50 text-green-700 border-green-200"] };
+              const [label, cls] = map[device.repair_status] || ["In Progress", "bg-amber-50 text-amber-700 border-amber-200"];
+              return <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded-sm border ${cls}`}>{label}</span>;
+            })() : <StatusBadge status={device.status} expectedReturnDate={device.expected_return_date} />}
             <span className="text-xs text-zinc-500">{device.condition}</span>
           </div>
         </div>

@@ -511,6 +511,60 @@ export default function Ledger() {
         </div>
       </div>
 
+      {/* Outstanding section */}
+      {!q && (customers.some(c => (c.balance || 0) > 0) || customers.some(c => (c.balance || 0) < 0)) && (
+        <div className="mb-6 animate-fade-up">
+          <div className="kpi-label mb-2 flex items-center gap-2">
+            <Clock className="w-3 h-3" />
+            Outstanding Balances
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* To Receive */}
+            {customers.some(c => (c.balance || 0) > 0) && (
+              <div className="border border-green-200 bg-green-50/50">
+                <div className="px-4 py-2 border-b border-green-200 bg-green-50 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-green-800">To Receive (You'll Get)</span>
+                  <span className="text-xs font-bold text-green-700">₹{fmtAmount(totalGet)}</span>
+                </div>
+                <ul className="divide-y divide-green-100 max-h-48 overflow-y-auto">
+                  {customers.filter(c => (c.balance || 0) > 0).map(c => (
+                    <li key={c.id} onClick={() => navigate(`/ledger/${c.id}`)}
+                      className="flex items-center justify-between px-4 py-2.5 hover:bg-green-50 cursor-pointer">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{c.name}</div>
+                        {c.phone && <div className="text-[11px] text-zinc-500">{c.phone}</div>}
+                      </div>
+                      <span className="font-mono text-sm font-bold text-green-700 ml-3 flex-shrink-0">+₹{fmtAmount(c.balance)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {/* To Pay */}
+            {customers.some(c => (c.balance || 0) < 0) && (
+              <div className="border border-red-200 bg-red-50/50">
+                <div className="px-4 py-2 border-b border-red-200 bg-red-50 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-red-800">To Pay (You'll Give)</span>
+                  <span className="text-xs font-bold text-red-700">₹{fmtAmount(totalGive)}</span>
+                </div>
+                <ul className="divide-y divide-red-100 max-h-48 overflow-y-auto">
+                  {customers.filter(c => (c.balance || 0) < 0).map(c => (
+                    <li key={c.id} onClick={() => navigate(`/ledger/${c.id}`)}
+                      className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{c.name}</div>
+                        {c.phone && <div className="text-[11px] text-zinc-500">{c.phone}</div>}
+                      </div>
+                      <span className="font-mono text-sm font-bold text-red-600 ml-3 flex-shrink-0">-₹{fmtAmount(Math.abs(c.balance))}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Search */}
       <div className="relative mb-4">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />

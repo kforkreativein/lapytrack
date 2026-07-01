@@ -151,7 +151,7 @@ export default function Catalog() {
   const [editingIssueCat, setEditingIssueCat] = useState(null); // { category_id, name, default_cost }
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
-  const [importFileName, setImportFileName] = useState(null);
+  const [importFileName, setImportFileName] = useState(() => localStorage.getItem("lastImportFileName") || null);
   const fileRef = useRef();
 
   const load = async () => {
@@ -308,6 +308,7 @@ export default function Catalog() {
     setImporting(true);
     setImportResult(null);
     setImportFileName(file.name);
+    localStorage.setItem("lastImportFileName", file.name);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -363,7 +364,7 @@ export default function Catalog() {
                 )}
               </div>
               <Button type="button" variant="outline" disabled={importing}
-                onClick={() => { setImportFileName(null); setImportResult(null); fileRef.current?.click(); }}
+                onClick={() => { setImportFileName(null); setImportResult(null); localStorage.removeItem("lastImportFileName"); fileRef.current?.click(); }}
                 className="rounded-sm border-zinc-300 h-9 text-xs whitespace-nowrap">
                 {importing ? "Importing…" : "Upload Another File"}
               </Button>
