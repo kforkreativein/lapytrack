@@ -758,7 +758,7 @@ async def stats(user: dict = Depends(get_current_user)):
     rs_not_started = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": {"$in": ["not_started", None]}}))
     rs_in_progress = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": "in_progress"}))
     rs_completed   = await db.devices.count_documents(scoped_filter(user, {"status": {"$ne": "issued"}, "repair_status": "completed"}))
-    rs_delivered   = await db.devices.count_documents(scoped_filter(user, {"repair_status": "delivered"}))
+    rs_delivered   = await db.devices.count_documents(scoped_filter(user, {"$or": [{"repair_status": "delivered"}, {"status": "issued"}]}))
     return {"total": total, "in_stock": in_stock, "issued": issued, "in_repair": in_repair,
             "overdue": overdue, "laptops": laptops, "desktops": desktops,
             "monthly_inward": monthly_inward, "monthly_outward": monthly_outward,
@@ -878,7 +878,7 @@ async def list_customers(user: dict = Depends(get_current_user)):
                         {"$ifNull": ["$amount", 0]},
                         {"$ifNull": ["$amount_paid", 0]},
                     ]}]},
-                    {"$ifNull": ["$amount", 0]},
+                    0,  # non-credit = already settled, no outstanding contribution
                 ]
             },
         }},
@@ -1342,7 +1342,8 @@ async def reports_advanced(period: str = "monthly", start_date: Optional[str] = 
     # ── Devices in period ─────────────────────────────────────────────────────
     devices = await db.devices.find(
         scoped_filter(user, {"created_at": {"$gte": start.isoformat()}}),
-        {"_id": 0, "status": 1, "repair_status": 1, "inward_date": 1, "outward_date": 1, "issue_categories": 1, "created_at": 1}
+        {"_id": 0, "status": 1, "repair_status": 1, "inward_date": 1, "outward_date": 1,
+         "issue_categories": 1, "created_at": 1, "brand": 1}
     ).to_list(2000)
     dev_received = len(devices)
     dev_completed = len([d for d in devices if d.get("repair_status") in ("completed", "delivered")])
@@ -1407,7 +1408,7 @@ async def reports_advanced(period: str = "monthly", start_date: Optional[str] = 
         top_customers = sorted([
             {"name": cust_by_id.get(k, {}).get("name", "Unknown"), "phone": cust_by_id.get(k, {}).get("phone"),
              "amount": v["amount"], "transactions": v["transactions"]}
-            for k, v in cust_revenue.items() if k in cust_by_id
+            for k, v in cust_revenue.items() if k in cust_by_id and v["amount"] > 0
         ], key=lambda x: -x["amount"])[:10]
     else:
         top_customers = []
@@ -1429,13 +1430,59 @@ async def reports_advanced(period: str = "monthly", start_date: Optional[str] = 
         except: pass
     cash_flow_calendar = [{"date": k, "amount": v} for k, v in sorted(cal_map.items())]
 
-    # ── Brand popularity (all-time) ───────────────────────────────────────────
-    all_devices_brands = await db.devices.find(scoped_filter(user), {"_id": 0, "brand": 1}).to_list(10000)
+    # ── Brand popularity (period devices) ────────────────────────────────────
     brand_map: dict = {}
-    for d in all_devices_brands:
+    for d in devices:
         b = (d.get("brand") or "Unknown").strip()
         brand_map[b] = brand_map.get(b, 0) + 1
     brand_popularity = sorted([{"brand": k, "count": v} for k, v in brand_map.items()], key=lambda x: -x["count"])[:10]
+
+    # ── Daily inward calendar (last 90 days) ──────────────────────────────────
+    ninety_ago_inward = now - timedelta(days=89)
+    inward_90 = await db.devices.find(
+        scoped_filter(user, {"created_at": {"$gte": ninety_ago_inward.isoformat()}}),
+        {"_id": 0, "inward_date": 1, "created_at": 1}
+    ).to_list(2000)
+    inward_cal: dict = {}
+    for d in inward_90:
+        try:
+            raw = d.get("inward_date") or d.get("created_at", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            day = dt.strftime("%Y-%m-%d")
+            inward_cal[day] = inward_cal.get(day, 0) + 1
+        except: pass
+    daily_inward_calendar = [{"date": k, "count": v} for k, v in sorted(inward_cal.items())]
+
+    # ── Daily outstanding calendar (last 90 days on_credit debits) ────────────
+    outstanding_90 = await db.transactions.find(
+        scoped_filter(user, {"date": {"$gte": ninety_ago_inward.isoformat()}, "type": "debit", "on_credit": True}),
+        {"_id": 0, "date": 1, "amount": 1, "amount_paid": 1}
+    ).to_list(5000)
+    outstanding_cal: dict = {}
+    for t in outstanding_90:
+        try:
+            raw = t.get("date", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            day = dt.strftime("%Y-%m-%d")
+            remaining = max(0, float(t.get("amount") or 0) - float(t.get("amount_paid") or 0))
+            outstanding_cal[day] = round(outstanding_cal.get(day, 0) + remaining, 2)
+        except: pass
+    daily_outstanding_calendar = [{"date": k, "amount": v} for k, v in sorted(outstanding_cal.items())]
+
+    # ── Daily outward calendar (last 90 days issued devices) ─────────────────
+    outward_90 = await db.devices.find(
+        scoped_filter(user, {"outward_date": {"$gte": ninety_ago_inward.isoformat()}}),
+        {"_id": 0, "outward_date": 1}
+    ).to_list(2000)
+    outward_cal: dict = {}
+    for d in outward_90:
+        try:
+            raw = d.get("outward_date", "")
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00") if raw.endswith("Z") else raw)
+            day = dt.strftime("%Y-%m-%d")
+            outward_cal[day] = outward_cal.get(day, 0) + 1
+        except: pass
+    daily_outward_calendar = [{"date": k, "count": v} for k, v in sorted(outward_cal.items())]
 
     # ── Repeat customers ──────────────────────────────────────────────────────
     all_dev_phones = await db.devices.find(scoped_filter(user), {"_id": 0, "customer_phone": 1, "customer_name": 1}).to_list(10000)
@@ -1487,6 +1534,9 @@ async def reports_advanced(period: str = "monthly", start_date: Optional[str] = 
         },
         "top_customers": top_customers,
         "cash_flow_calendar": cash_flow_calendar,
+        "daily_inward_calendar": daily_inward_calendar,
+        "daily_outstanding_calendar": daily_outstanding_calendar,
+        "daily_outward_calendar": daily_outward_calendar,
         "brand_popularity": brand_popularity,
         "repeat_customers": repeat_customers,
         "pending_delivery": pending_del,

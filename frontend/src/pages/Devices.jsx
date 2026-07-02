@@ -88,7 +88,7 @@ export default function Devices() {
     <div className="mobile-page" data-testid="devices-page">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-5 md:mb-6 animate-fade-up">
         <div>
-          <div className="kpi-label">Inventory</div>
+          <div className="kpi-label">Repairing</div>
           <h1 className="font-heading text-2xl md:text-4xl font-bold tracking-tight mt-1">Devices</h1>
           <p className="text-sm text-zinc-500 mt-1">{devices.length} total records</p>
         </div>

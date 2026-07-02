@@ -203,28 +203,6 @@ export default function Reports() {
             ))}
           </div>
 
-          {/* ── 2. Monthly Trend ── */}
-          {adv?.monthly_trend?.length > 1 && (
-            <div className="border border-zinc-200 bg-white p-4 md:p-6 mb-6 animate-fade-up">
-              <div className="kpi-label mb-4">6-Month Revenue Trend</div>
-              <div className="h-56 md:h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={adv.monthly_trend} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false}
-                      tickFormatter={v => `₹${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
-                    <Tooltip formatter={(v, name) => [INR(v), name === "credit" ? "Income" : "Expense"]}
-                      contentStyle={{ borderRadius: 4, border: "1px solid #E5E7EB", fontSize: 12 }} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={n => n === "credit" ? "Income" : "Expense"} />
-                    <Line type="monotone" dataKey="credit" stroke="#16A34A" strokeWidth={2.5} dot={{ r: 4, fill: "#16A34A" }} name="credit" />
-                    <Line type="monotone" dataKey="debit" stroke="#DC2626" strokeWidth={2.5} dot={{ r: 4, fill: "#DC2626" }} name="debit" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
           {/* ── 3. Credit Sales Tracker ── */}
           {adv?.credit_sales && (
             <SectionBox title="Credit Sales Tracker">
@@ -389,10 +367,12 @@ export default function Reports() {
             <SectionBox title="Category Detail">
               <ul className="divide-y divide-zinc-200">
                 {[...data.by_category].sort((a,b) => (b.credit+b.debit)-(a.credit+a.debit)).map(c => (
-                  <li key={c.category} className="px-4 md:px-5 py-3 flex flex-wrap items-center gap-2 sm:gap-3">
+                  <li key={c.category} className="px-4 md:px-5 py-3 flex items-center gap-2">
                     <span className="flex-1 text-sm font-medium">{c.category}</span>
-                    {c.credit > 0 && <span className="text-xs font-mono text-green-700">+{INR(c.credit)}</span>}
-                    {c.debit > 0 && <span className="text-xs font-mono text-red-600">-{INR(c.debit)}</span>}
+                    <div className="text-right flex-shrink-0">
+                      {c.credit > 0 && <div className="text-xs font-mono text-green-700">+{INR(c.credit)} <span className="text-zinc-400 font-normal">in</span></div>}
+                      {c.debit > 0 && <div className="text-xs font-mono text-red-600">-{INR(c.debit)} <span className="text-zinc-400 font-normal">out</span></div>}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -493,23 +473,25 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* ── 11. Cash Flow Calendar + Daily Inward ── */}
-          {(adv?.cash_flow_calendar?.length > 0 || adv?.daily_inward_calendar?.length > 0) && (
-          <div className={`grid grid-cols-1 ${adv?.daily_inward_calendar?.length > 0 && adv?.cash_flow_calendar?.length > 0 ? "md:grid-cols-2" : ""} gap-4 md:gap-6 mb-6`}>
-            {adv?.cash_flow_calendar?.length > 0 && (
-              <div className="border border-zinc-200 bg-white p-4 md:p-5">
-                <div className="kpi-label mb-3">Daily Revenue — Last 90 Days</div>
-                <CalendarHeatmap data={adv.cash_flow_calendar} valueKey="amount" scheme="blue" />
-              </div>
-            )}
-            {adv?.daily_inward_calendar?.length > 0 && (
-              <div className="border border-zinc-200 bg-white p-4 md:p-5">
-                <div className="kpi-label mb-3">Daily Inward Devices — Last 90 Days</div>
-                <CalendarHeatmap data={adv.daily_inward_calendar} valueKey="count" scheme="green" />
-              </div>
-            )}
+          {/* ── 11. Activity Heatmaps (4×) ── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-6">
+            <div className="border border-zinc-200 bg-white p-4 md:p-5">
+              <div className="kpi-label mb-3">Daily Revenue — Last 90 Days</div>
+              <CalendarHeatmap data={adv?.cash_flow_calendar || []} valueKey="amount" scheme="blue" />
+            </div>
+            <div className="border border-zinc-200 bg-white p-4 md:p-5">
+              <div className="kpi-label mb-3">Daily Outstanding — Last 90 Days</div>
+              <CalendarHeatmap data={adv?.daily_outstanding_calendar || []} valueKey="amount" scheme="blue" />
+            </div>
+            <div className="border border-zinc-200 bg-white p-4 md:p-5">
+              <div className="kpi-label mb-3">Daily Inward Devices — Last 90 Days</div>
+              <CalendarHeatmap data={adv?.daily_inward_calendar || []} valueKey="count" scheme="green" />
+            </div>
+            <div className="border border-zinc-200 bg-white p-4 md:p-5">
+              <div className="kpi-label mb-3">Daily Outward Devices — Last 90 Days</div>
+              <CalendarHeatmap data={adv?.daily_outward_calendar || []} valueKey="count" scheme="green" />
+            </div>
           </div>
-          )}
 
           {/* ── 12. Top Customers + Brand Popularity ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-6">
@@ -619,6 +601,28 @@ export default function Reports() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* ── 15. 6-Month Revenue Trend ── */}
+          {adv?.monthly_trend?.length > 1 && (
+            <div className="border border-zinc-200 bg-white p-4 md:p-6 mb-6 animate-fade-up">
+              <div className="kpi-label mb-4">6-Month Revenue Trend</div>
+              <div className="h-56 md:h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={adv.monthly_trend} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false}
+                      tickFormatter={v => `₹${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
+                    <Tooltip formatter={(v, name) => [INR(v), name === "credit" ? "Income" : "Expense"]}
+                      contentStyle={{ borderRadius: 4, border: "1px solid #E5E7EB", fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={n => n === "credit" ? "Income" : "Expense"} />
+                    <Line type="monotone" dataKey="credit" stroke="#16A34A" strokeWidth={2.5} dot={{ r: 4, fill: "#16A34A" }} name="credit" />
+                    <Line type="monotone" dataKey="debit" stroke="#DC2626" strokeWidth={2.5} dot={{ r: 4, fill: "#DC2626" }} name="debit" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           )}
 
