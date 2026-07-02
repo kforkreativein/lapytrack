@@ -878,7 +878,7 @@ async def list_customers(user: dict = Depends(get_current_user)):
                         {"$ifNull": ["$amount", 0]},
                         {"$ifNull": ["$amount_paid", 0]},
                     ]}]},
-                    0,  # non-credit = already settled, no outstanding contribution
+                    {"$ifNull": ["$amount", 0]},
                 ]
             },
         }},
