@@ -866,25 +866,21 @@ class ReminderCreate(BaseModel):
 @api_router.get("/customers")
 async def list_customers(user: dict = Depends(get_current_user)):
     customers = await db.customers.find(scoped_filter(user), {"_id": 0}).sort("name", 1).to_list(2000)
+    # Only on_credit transactions with unpaid remaining amount contribute to balance.
+    # Non-credit transactions are already settled — they never create outstanding.
     agg = await db.transactions.aggregate([
-        {"$match": scoped_filter(user, {"customer_id": {"$ne": None}})},
+        {"$match": scoped_filter(user, {"customer_id": {"$ne": None}, "on_credit": True})},
         {"$project": {
             "customer_id": 1,
             "type": 1,
-            "contrib": {
-                "$cond": [
-                    {"$eq": [{"$ifNull": ["$on_credit", False]}, True]},
-                    {"$max": [0, {"$subtract": [
-                        {"$ifNull": ["$amount", 0]},
-                        {"$ifNull": ["$amount_paid", 0]},
-                    ]}]},
-                    {"$ifNull": ["$amount", 0]},
-                ]
-            },
+            "remaining": {"$max": [0, {"$subtract": [
+                {"$ifNull": ["$amount", 0]},
+                {"$ifNull": ["$amount_paid", 0]},
+            ]}]},
         }},
         {"$group": {
             "_id": {"customer_id": "$customer_id", "type": "$type"},
-            "total": {"$sum": "$contrib"},
+            "total": {"$sum": "$remaining"},
         }},
     ]).to_list(10000)
     by_customer: dict = {}
@@ -901,6 +897,23 @@ async def list_customers(user: dict = Depends(get_current_user)):
         c["total_credit"] = round(totals["credit"], 2)
         c["total_debit"] = round(totals["debit"], 2)
         out.append(c)
+    # Personal/Other: on_credit transactions with no customer_id
+    po_agg = await db.transactions.aggregate([
+        {"$match": scoped_filter(user, {"customer_id": None, "on_credit": True})},
+        {"$group": {
+            "_id": "$type",
+            "remaining": {"$sum": {"$max": [0, {"$subtract": [
+                {"$ifNull": ["$amount", 0]},
+                {"$ifNull": ["$amount_paid", 0]},
+            ]}]}},
+        }},
+    ]).to_list(10)
+    po_credit = next((float(r["remaining"]) for r in po_agg if r["_id"] == "credit"), 0.0)
+    po_debit  = next((float(r["remaining"]) for r in po_agg if r["_id"] == "debit"),  0.0)
+    po_balance = round(po_credit - po_debit, 2)
+    if po_balance != 0:
+        out.append({"id": "__personal_other__", "name": "Personal / Other", "phone": None,
+                    "balance": po_balance, "total_credit": round(po_credit, 2), "total_debit": round(po_debit, 2)})
     return out
 
 @api_router.post("/customers")

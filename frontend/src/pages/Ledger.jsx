@@ -425,9 +425,11 @@ export default function Ledger() {
 
   // Only show customers with outstanding balance when not searching.
   // When searching, include all customers so you can find VCF-imported contacts.
+  // exclude synthetic "Personal / Other" from the searchable customer list
+  const realCustomers = customers.filter(c => c.id !== "__personal_other__");
   const activeCustomers = q
-    ? customers
-    : customers.filter(c => (c.balance || 0) !== 0);
+    ? realCustomers
+    : realCustomers.filter(c => (c.balance || 0) !== 0);
   const filtered = activeCustomers.filter(c =>
     c.name.toLowerCase().includes(q.toLowerCase()) ||
     (c.phone || "").includes(q)
@@ -528,8 +530,9 @@ export default function Ledger() {
                 </div>
                 <ul className="divide-y divide-green-100 max-h-48 overflow-y-auto">
                   {customers.filter(c => (c.balance || 0) > 0).map(c => (
-                    <li key={c.id} onClick={() => navigate(`/ledger/${c.id}`)}
-                      className="flex items-center justify-between px-4 py-2.5 hover:bg-green-50 cursor-pointer">
+                    <li key={c.id}
+                      onClick={() => c.id !== "__personal_other__" && navigate(`/ledger/${c.id}`)}
+                      className={`flex items-center justify-between px-4 py-2.5 hover:bg-green-50 ${c.id !== "__personal_other__" ? "cursor-pointer" : ""}`}>
                       <div className="min-w-0">
                         <div className="text-sm font-medium truncate">{c.name}</div>
                         {c.phone && <div className="text-[11px] text-zinc-500">{c.phone}</div>}
@@ -549,8 +552,9 @@ export default function Ledger() {
                 </div>
                 <ul className="divide-y divide-red-100 max-h-48 overflow-y-auto">
                   {customers.filter(c => (c.balance || 0) < 0).map(c => (
-                    <li key={c.id} onClick={() => navigate(`/ledger/${c.id}`)}
-                      className="flex items-center justify-between px-4 py-2.5 hover:bg-red-50 cursor-pointer">
+                    <li key={c.id}
+                      onClick={() => c.id !== "__personal_other__" && navigate(`/ledger/${c.id}`)}
+                      className={`flex items-center justify-between px-4 py-2.5 hover:bg-red-50 ${c.id !== "__personal_other__" ? "cursor-pointer" : ""}`}>
                       <div className="min-w-0">
                         <div className="text-sm font-medium truncate">{c.name}</div>
                         {c.phone && <div className="text-[11px] text-zinc-500">{c.phone}</div>}
